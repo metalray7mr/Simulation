@@ -456,9 +456,365 @@ class Fish {
   }
 }
 
+const CREATURE_TYPES = ["jellyfish", "minnow", "seahorse", "turtle", "shrimp", "starfish", "crab", "octopus"];
+const creaturePalette = ["#c7a7ff", "#ff9ecf", "#8ed8ff", "#ffd28e", "#b5f0c8", "#f0a6a6", "#d4c4a8"];
+
+class SeaCreature {
+  constructor(type = null) {
+    const b = getBounds();
+    this.type = type || CREATURE_TYPES[Math.floor(Math.random() * CREATURE_TYPES.length)];
+    this.x = randomRange(-b.x, b.x);
+    this.y = randomRange(-b.y, b.y);
+    this.vx = randomRange(-18, 18);
+    this.vy = randomRange(-12, 12);
+    this.phase = Math.random() * Math.PI * 2;
+    this.scale = randomRange(0.65, 1.25);
+    this.depth = randomRange(0.35, 1);
+    this.alpha = lerp(0.35, 0.85, this.depth);
+    this.color = creaturePalette[Math.floor(Math.random() * creaturePalette.length)];
+    this.dark = shade(this.color, -0.3);
+    this.facing = Math.random() < 0.5 ? 1 : -1;
+    this.targetTimer = randomRange(2, 6);
+    this.tx = this.x;
+    this.ty = this.y;
+
+    if (this.type === "minnow") {
+      this.scale *= 0.55;
+      this.vx = randomRange(30, 55) * this.facing;
+      this.alpha *= 0.75;
+    }
+    if (this.type === "turtle") this.scale *= 1.35;
+    if (this.type === "starfish" || this.type === "crab") {
+      this.y = b.y * randomRange(0.55, 0.92);
+      this.vy = 0;
+    }
+    if (this.type === "jellyfish") {
+      this.vy = randomRange(-8, -4);
+      this.vx *= 0.35;
+    }
+  }
+
+  pickTarget() {
+    const b = getBounds();
+    this.tx = randomRange(-b.x, b.x);
+    this.ty = randomRange(-b.y, b.y);
+    if (this.type === "starfish" || this.type === "crab") {
+      this.ty = b.y * randomRange(0.55, 0.92);
+    }
+    if (this.type === "jellyfish") {
+      this.ty = randomRange(-b.y * 0.5, b.y * 0.3);
+    }
+    this.targetTimer = randomRange(2, 7);
+  }
+
+  update(dt, time) {
+    const b = getBounds();
+    this.phase += dt * randomRange(1.2, 2.4);
+    this.targetTimer -= dt;
+    if (this.targetTimer <= 0) this.pickTarget();
+
+    let ax = 0;
+    let ay = 0;
+    const dx = this.tx - this.x;
+    const dy = this.ty - this.y;
+    const dist = Math.hypot(dx, dy);
+
+    if (dist > 1) {
+      const pull = this.type === "shrimp" ? 2.2 : this.type === "turtle" ? 0.35 : 0.9;
+      ax += (dx / dist) * pull * 20;
+      ay += (dy / dist) * pull * 20;
+    }
+
+    if (this.type === "jellyfish") {
+      ay += Math.sin(time * 0.8 + this.phase) * 6 - 4;
+      ax += Math.sin(time * 0.5 + this.phase) * 8;
+    }
+    if (this.type === "seahorse") {
+      ay += Math.sin(time * 1.4 + this.phase) * 10;
+      this.vx *= 0.96;
+    }
+    if (this.type === "octopus") {
+      ax += Math.sin(time * 0.35 + this.phase) * 12;
+      ay += Math.cos(time * 0.28 + this.phase) * 10;
+    }
+    if (this.type === "starfish") {
+      ax += Math.sin(time * 0.2 + this.phase) * 4;
+    }
+    if (this.type === "crab") {
+      if (Math.abs(dx) > 20) {
+        this.facing = dx > 0 ? 1 : -1;
+        ax += this.facing * 16;
+      }
+    }
+
+    const maxSpeed = {
+      jellyfish: 16,
+      minnow: 70,
+      seahorse: 14,
+      turtle: 22,
+      shrimp: 48,
+      starfish: 6,
+      crab: 18,
+      octopus: 20,
+    }[this.type];
+
+    this.vx += ax * dt;
+    this.vy += ay * dt;
+    this.vx *= 0.985;
+    this.vy *= 0.985;
+
+    const speed = Math.hypot(this.vx, this.vy);
+    if (speed > maxSpeed) {
+      this.vx = (this.vx / speed) * maxSpeed;
+      this.vy = (this.vy / speed) * maxSpeed;
+    }
+
+    this.x += this.vx * dt;
+    this.y += this.vy * dt;
+    this.x = clamp(this.x, -b.x, b.x);
+    this.y = clamp(this.y, -b.y, b.y);
+
+    if (this.vx > 2) this.facing = 1;
+    if (this.vx < -2) this.facing = -1;
+  }
+
+  draw(cx, cy) {
+    ctx.save();
+    ctx.translate(cx + this.x, cy + this.y);
+    ctx.scale(this.facing * this.scale, this.scale);
+    ctx.globalAlpha = this.alpha;
+
+  const drawers = {
+      jellyfish: () => this.drawJellyfish(),
+      minnow: () => this.drawMinnow(),
+      seahorse: () => this.drawSeahorse(),
+      turtle: () => this.drawTurtle(),
+      shrimp: () => this.drawShrimp(),
+      starfish: () => this.drawStarfish(),
+      crab: () => this.drawCrab(),
+      octopus: () => this.drawOctopus(),
+    };
+    drawers[this.type]();
+    ctx.restore();
+  }
+
+  drawJellyfish() {
+    const pulse = 1 + Math.sin(this.phase * 2) * 0.12;
+    const g = ctx.createRadialGradient(0, -4, 2, 0, -4, 16);
+    g.addColorStop(0, shade(this.color, 0.35));
+    g.addColorStop(1, this.color);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(0, -4, 12 * pulse, Math.PI, 0);
+    ctx.quadraticCurveTo(14, 2, 0, 6);
+    ctx.quadraticCurveTo(-14, 2, 0, -4);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.2)";
+    ctx.lineWidth = 1;
+    for (let i = -2; i <= 2; i += 1) {
+      ctx.beginPath();
+      ctx.moveTo(i * 3, 6);
+      for (let t = 0; t <= 1; t += 0.2) {
+        const y = 6 + t * 18;
+        const x = i * 3 + Math.sin(this.phase * 3 + t * 6 + i) * 4;
+        ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+  }
+
+  drawMinnow() {
+    ctx.fillStyle = "#b8c7d4";
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 10, 4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(-9, 0);
+    ctx.lineTo(-14, -3 + Math.sin(this.phase * 4) * 2);
+    ctx.lineTo(-14, 3 - Math.sin(this.phase * 4) * 2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#111";
+    ctx.beginPath();
+    ctx.arc(5, -1, 1.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  drawSeahorse() {
+    ctx.strokeStyle = this.dark;
+    ctx.lineWidth = 3;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(8, 8);
+    ctx.quadraticCurveTo(0, 0, -2, -14);
+    ctx.quadraticCurveTo(-4, -20, 2, -24);
+    ctx.stroke();
+    ctx.fillStyle = this.color;
+    ctx.beginPath();
+    ctx.ellipse(6, 8, 5, 3, 0.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(2, -24, 3, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#111";
+    ctx.beginPath();
+    ctx.arc(4, -23, 1, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  drawTurtle() {
+    ctx.fillStyle = this.dark;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 18, 14, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = this.color;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 14, 10, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(0,0,0,0.2)";
+    ctx.lineWidth = 1;
+    for (let i = 0; i < 6; i += 1) {
+      const a = (i / 6) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.arc(Math.cos(a) * 6, Math.sin(a) * 4, 2.5, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    const flip = Math.sin(this.phase * 3) * 0.5;
+    ctx.fillStyle = this.dark;
+    [["-14", flip], ["14", -flip], ["-8", "-10"], ["8", "-10"]].forEach(([x, y]) => {
+      ctx.beginPath();
+      ctx.ellipse(Number(x), Number(y), 6, 3, Number(y) * 0.08, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.fillStyle = "#111";
+    ctx.beginPath();
+    ctx.arc(12, -4, 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  drawShrimp() {
+    const curl = Math.sin(this.phase * 2) * 0.2;
+    ctx.fillStyle = this.color;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 11, 4.5, curl, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(-8, 0);
+    ctx.quadraticCurveTo(-14, -6, -10, -10);
+    ctx.lineTo(-8, -4);
+    ctx.fill();
+    ctx.strokeStyle = this.dark;
+    ctx.lineWidth = 1.2;
+    for (let i = 0; i < 4; i += 1) {
+      ctx.beginPath();
+      ctx.moveTo(-2 + i * 3, 2);
+      ctx.lineTo(-4 + i * 3 + Math.sin(this.phase * 5 + i), 8);
+      ctx.stroke();
+    }
+    ctx.fillStyle = "#111";
+    ctx.beginPath();
+    ctx.arc(7, -1, 1.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  drawStarfish() {
+    ctx.fillStyle = this.color;
+    ctx.strokeStyle = this.dark;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = 0; i < 5; i += 1) {
+      const a = (i / 5) * Math.PI * 2 - Math.PI / 2;
+      const wiggle = Math.sin(this.phase + i) * 0.15;
+      const x = Math.cos(a) * (10 + wiggle * 3);
+      const y = Math.sin(a) * (10 + wiggle * 3);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  drawCrab() {
+    ctx.fillStyle = this.color;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 10, 7, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = this.dark;
+    for (let i = -1; i <= 1; i += 2) {
+      ctx.beginPath();
+      ctx.ellipse(i * 12, -2, 4, 3, i * 0.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.strokeStyle = this.dark;
+    ctx.lineWidth = 1.5;
+    for (let i = 0; i < 4; i += 1) {
+      const side = i < 2 ? -1 : 1;
+      const offset = i % 2 === 0 ? -6 : 4;
+      ctx.beginPath();
+      ctx.moveTo(side * 8, offset);
+      for (let s = 0; s <= 1; s += 0.25) {
+        ctx.lineTo(
+          side * (8 + s * 10),
+          offset + Math.sin(this.phase * 4 + s * 4 + i) * 3
+        );
+      }
+      ctx.stroke();
+    }
+    ctx.fillStyle = "#111";
+    ctx.beginPath();
+    ctx.arc(-3, -3, 1.2, 0, Math.PI * 2);
+    ctx.arc(3, -3, 1.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  drawOctopus() {
+    ctx.fillStyle = this.color;
+    ctx.beginPath();
+    ctx.arc(0, -4, 10, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#111";
+    ctx.beginPath();
+    ctx.arc(-3, -5, 1.5, 0, Math.PI * 2);
+    ctx.arc(3, -5, 1.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = this.dark;
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 6; i += 1) {
+      const spread = (i - 2.5) * 0.35;
+      ctx.beginPath();
+      ctx.moveTo(spread * 4, 4);
+      for (let t = 0; t <= 1; t += 0.2) {
+        const y = 4 + t * 16;
+        const x = spread * 4 + Math.sin(this.phase * 3 + t * 5 + i) * 5;
+        ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+  }
+}
+
 let fishA;
 let fishB;
+let creatures = [];
 let lastTime = performance.now();
+
+function initCreatures() {
+  creatures = [];
+  const count = width < 768 ? 12 : 20;
+  for (let i = 0; i < count; i += 1) {
+    creatures.push(new SeaCreature());
+  }
+  if (width >= 768) {
+    for (let i = 0; i < 3; i += 1) {
+      const school = new SeaCreature("minnow");
+      school.x += randomRange(-40, 40);
+      school.y += randomRange(-40, 40);
+      creatures.push(school);
+    }
+  }
+  creatures.sort((a, b) => a.depth - b.depth);
+}
 
 function initFish() {
   fishA = new Fish({ color: "#3ecf6e", label: "A", x: -120, y: 30 });
@@ -545,6 +901,12 @@ function animate(now) {
   const time = now / 1000;
 
   drawBackground(time);
+
+  creatures.forEach((creature) => {
+    creature.update(dt, time);
+    creature.draw(width / 2, height / 2);
+  });
+
   fishA.update(dt, fishB, time);
   fishB.update(dt, fishA, time);
   fishA.draw();
@@ -556,11 +918,13 @@ function animate(now) {
 window.addEventListener("resize", () => {
   resize();
   initFish();
+  initCreatures();
   initBubbles();
 });
 
 resize();
 initFish();
+initCreatures();
 initBubbles();
 initCaustics();
 requestAnimationFrame(animate);
