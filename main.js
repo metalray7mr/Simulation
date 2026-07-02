@@ -1,34 +1,11 @@
-import * as THREE from "three";
-
 const canvas = document.getElementById("scene");
+const ctx = canvas.getContext("2d");
 
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.setClearColor(0x0a1628, 1);
+let width = 0;
+let height = 0;
+let dpr = 1;
 
-const scene = new THREE.Scene();
-scene.fog = new THREE.FogExp2(0x0a1628, 0.016);
-
-const camera = new THREE.PerspectiveCamera(52, 1, 0.1, 200);
-camera.position.set(0, 6, 24);
-
-scene.add(new THREE.AmbientLight(0x8ec8ff, 0.55));
-const sun = new THREE.DirectionalLight(0xffffff, 0.95);
-sun.position.set(8, 18, 10);
-scene.add(sun);
-
-const floor = new THREE.Mesh(
-  new THREE.PlaneGeometry(100, 100),
-  new THREE.MeshStandardMaterial({ color: 0x08101c, roughness: 1 })
-);
-floor.rotation.x = -Math.PI / 2;
-floor.position.y = -5;
-scene.add(floor);
-
-const BOUNDS = { x: 18, y: 4, z: 14 };
-const tempVec = new THREE.Vector3();
-const tempVec2 = new THREE.Vector3();
-const up = new THREE.Vector3(0, 1, 0);
+const bubbles = [];
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -38,168 +15,141 @@ function randomRange(min, max) {
   return min + Math.random() * (max - min);
 }
 
-function createFishMesh(color) {
-  const group = new THREE.Group();
-  const mat = new THREE.MeshStandardMaterial({
-    color,
-    roughness: 0.4,
-    metalness: 0.12,
-    emissive: color,
-    emissiveIntensity: 0.1,
-  });
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  width = window.innerWidth;
+  height = window.innerHeight;
+  canvas.width = width * dpr;
+  canvas.height = height * dpr;
+  canvas.style.width = `${width}px`;
+  canvas.style.height = `${height}px`;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
 
-  const body = new THREE.Mesh(new THREE.SphereGeometry(0.55, 14, 12), mat);
-  body.scale.set(1.9, 0.78, 0.72);
-  group.add(body);
-
-  const tail = new THREE.Mesh(new THREE.ConeGeometry(0.34, 0.75, 8), mat);
-  tail.rotation.z = Math.PI / 2;
-  tail.position.x = -1.1;
-  group.add(tail);
-
-  const dorsal = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.5, 6), mat);
-  dorsal.rotation.x = -Math.PI / 2;
-  dorsal.position.set(0, 0.42, 0);
-  group.add(dorsal);
-
-  const leftFin = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.38, 6), mat);
-  leftFin.rotation.z = Math.PI / 2;
-  leftFin.position.set(0.15, -0.08, 0.32);
-  group.add(leftFin);
-
-  const rightFin = leftFin.clone();
-  rightFin.position.z = -0.32;
-  group.add(rightFin);
-
-  const eyeMat = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.2 });
-  const eyeGeo = new THREE.SphereGeometry(0.08, 8, 8);
-  const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
-  leftEye.position.set(0.72, 0.12, 0.22);
-  group.add(leftEye);
-  const rightEye = leftEye.clone();
-  rightEye.position.z = -0.22;
-  group.add(rightEye);
-
-  group.userData.parts = { tail, dorsal, leftFin, rightFin };
-  return group;
+function getBounds() {
+  return {
+    x: width * 0.42,
+    y: height * 0.38,
+  };
 }
 
 class Fish {
-  constructor({ color, label, start }) {
-    this.mesh = createFishMesh(color);
-    this.mesh.scale.setScalar(1.4);
+  constructor({ color, label, x, y }) {
+    this.color = color;
     this.label = label;
+    this.x = x;
+    this.y = y;
+    this.vx = randomRange(-40, 40);
+    this.vy = randomRange(-20, 20);
+    this.ax = 0;
+    this.ay = 0;
 
-    this.position = new THREE.Vector3(...start);
-    this.velocity = new THREE.Vector3(randomRange(-1, 1), 0, randomRange(-1, 1));
-    this.acceleration = new THREE.Vector3();
+    this.maxSpeed = randomRange(70, 95);
+    this.cruiseSpeed = randomRange(42, 58);
+    this.maxForce = randomRange(120, 160);
+    this.maxTurnRate = randomRange(2.4, 3.2);
 
-    this.maxSpeed = randomRange(2.4, 3.2);
-    this.cruiseSpeed = randomRange(1.4, 2.0);
-    this.maxForce = randomRange(2.8, 3.6);
-    this.maxTurnRate = randomRange(1.8, 2.4);
-
-    this.target = new THREE.Vector3();
+    this.heading = Math.atan2(this.vy, this.vx);
+    this.targetX = x;
+    this.targetY = y;
     this.pickNewTarget();
 
-    this.wanderAngle = Math.random() * Math.PI * 2;
     this.tailPhase = Math.random() * Math.PI * 2;
-    this.restTimer = randomRange(0, 2);
+    this.restTimer = randomRange(0, 1.5);
     this.burstTimer = randomRange(3, 7);
+    this.size = width < 768 ? 22 : 28;
     this.personality = {
       curiosity: randomRange(0.3, 0.9),
       shyness: randomRange(0.2, 0.7),
     };
-
-    this.heading = Math.atan2(this.velocity.z, this.velocity.x);
-    this.pitch = 0;
-    this.bank = 0;
   }
 
   pickNewTarget() {
-    this.target.set(
-      randomRange(-BOUNDS.x * 0.75, BOUNDS.x * 0.75),
-      randomRange(-BOUNDS.y * 0.6, BOUNDS.y * 0.85),
-      randomRange(-BOUNDS.z * 0.75, BOUNDS.z * 0.75)
-    );
+    const bounds = getBounds();
+    this.targetX = randomRange(-bounds.x, bounds.x);
+    this.targetY = randomRange(-bounds.y, bounds.y);
     this.restTimer = 0;
   }
 
-  seek(destination, weight = 1) {
-    tempVec.copy(destination).sub(this.position);
-    const distance = tempVec.length();
+  seek(tx, ty, weight = 1) {
+    let dx = tx - this.x;
+    let dy = ty - this.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 0.001) return { x: 0, y: 0 };
 
-    if (distance < 0.001) return new THREE.Vector3();
+    dx /= dist;
+    dy /= dist;
 
-    tempVec.normalize();
     let desiredSpeed = this.maxSpeed;
-    if (distance < 6) {
-      desiredSpeed = THREE.MathUtils.mapLinear(distance, 0, 6, 0.3, this.maxSpeed);
+    if (dist < 120) {
+      desiredSpeed = (dist / 120) * this.maxSpeed;
     }
 
-    tempVec.multiplyScalar(desiredSpeed);
-    tempVec.sub(this.velocity);
-    tempVec.clampLength(0, this.maxForce * weight);
-    return tempVec;
+    const steerX = dx * desiredSpeed - this.vx;
+    const steerY = dy * desiredSpeed - this.vy;
+    const mag = Math.hypot(steerX, steerY);
+    const limit = this.maxForce * weight;
+    if (mag > limit) {
+      return { x: (steerX / mag) * limit, y: (steerY / mag) * limit };
+    }
+    return { x: steerX, y: steerY };
   }
 
   wander(dt) {
-    this.wanderAngle += randomRange(-0.6, 0.6) * dt;
-    const ahead = tempVec.copy(this.velocity);
-    if (ahead.lengthSq() < 0.01) {
-      ahead.set(Math.cos(this.wanderAngle), 0, Math.sin(this.wanderAngle));
-    }
-    ahead.normalize().multiplyScalar(2.5);
-    ahead.add(this.position);
-
-    ahead.x += Math.cos(this.wanderAngle) * 2.2;
-    ahead.y += Math.sin(this.wanderAngle * 0.7) * 0.6;
-    ahead.z += Math.sin(this.wanderAngle) * 2.2;
-
-    return this.seek(ahead, 0.35);
+    this.wanderAngle = (this.wanderAngle || Math.random() * Math.PI * 2) + randomRange(-0.8, 0.8) * dt;
+    const speed = Math.hypot(this.vx, this.vy) || 1;
+    const nx = this.vx / speed;
+    const ny = this.vy / speed;
+    const wx = this.x + nx * 60 + Math.cos(this.wanderAngle) * 50;
+    const wy = this.y + ny * 60 + Math.sin(this.wanderAngle) * 50;
+    return this.seek(wx, wy, 0.35);
   }
 
   avoidWalls() {
-    const force = new THREE.Vector3();
-    const margin = 4;
-    const strength = 2.2;
+    const bounds = getBounds();
+    const margin = 70;
+    const strength = 180;
+    let fx = 0;
+    let fy = 0;
 
-    if (this.position.x < -BOUNDS.x + margin) force.x += strength;
-    if (this.position.x > BOUNDS.x - margin) force.x -= strength;
-    if (this.position.y < -BOUNDS.y + margin) force.y += strength;
-    if (this.position.y > BOUNDS.y - margin) force.y -= strength;
-    if (this.position.z < -BOUNDS.z + margin) force.z += strength;
-    if (this.position.z > BOUNDS.z - margin) force.z -= strength;
+    if (this.x < -bounds.x + margin) fx += strength;
+    if (this.x > bounds.x - margin) fx -= strength;
+    if (this.y < -bounds.y + margin) fy += strength;
+    if (this.y > bounds.y - margin) fy -= strength;
 
-    return force;
+    return { x: fx, y: fy };
   }
 
   interact(other) {
-    const force = new THREE.Vector3();
-    tempVec.copy(this.position).sub(other.position);
-    const distance = tempVec.length();
-    if (distance < 0.001) return force;
+    const dx = this.x - other.x;
+    const dy = this.y - other.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 0.001) return { x: 0, y: 0 };
 
-    tempVec.normalize();
+    let fx = 0;
+    let fy = 0;
+    const nx = dx / dist;
+    const ny = dy / dist;
 
-    if (distance < 2.2) {
-      tempVec.multiplyScalar((2.2 - distance) * 3.5 * this.personality.shyness);
-      force.add(tempVec);
-    } else if (distance > 9 && distance < 14) {
-      tempVec2.copy(other.velocity).multiplyScalar(0.12 * this.personality.curiosity);
-      force.add(tempVec2);
+    if (dist < 55) {
+      const push = (55 - dist) * 4 * this.personality.shyness;
+      fx += nx * push;
+      fy += ny * push;
+    } else if (dist > 180 && dist < 280) {
+      fx += other.vx * 0.08 * this.personality.curiosity;
+      fy += other.vy * 0.08 * this.personality.curiosity;
     }
 
-    return force;
+    return { x: fx, y: fy };
   }
 
   update(dt, other, time) {
-    this.acceleration.set(0, 0, 0);
+    const bounds = getBounds();
+    const toTarget = Math.hypot(this.targetX - this.x, this.targetY - this.y);
 
-    const toTarget = this.position.distanceTo(this.target);
-    if (toTarget < 1.8) {
+    if (toTarget < 30) {
       this.restTimer += dt;
-      if (this.restTimer > randomRange(0.6, 1.8)) {
+      if (this.restTimer > randomRange(0.5, 1.5)) {
         this.pickNewTarget();
       }
     }
@@ -210,159 +160,173 @@ class Fish {
       this.pickNewTarget();
     }
 
-    const seeking = this.seek(this.target, 1);
+    const seeking = this.seek(this.targetX, this.targetY, 1);
     const wandering = this.wander(dt);
     const walls = this.avoidWalls();
     const social = this.interact(other);
 
-    this.acceleration.add(seeking);
-    this.acceleration.add(wandering);
-    this.acceleration.add(walls);
-    this.acceleration.add(social);
+    this.ax = seeking.x + wandering.x + walls.x + social.x;
+    this.ay = seeking.y + wandering.y + walls.y + social.y + Math.sin(time * 0.9 + this.tailPhase) * 12;
 
-    const buoyancy = Math.sin(time * 0.7 + this.tailPhase) * 0.18;
-    this.acceleration.y += buoyancy;
-
-    if (this.restTimer > 0 && this.restTimer < 0.8) {
-      this.acceleration.multiplyScalar(0.25);
-      this.velocity.multiplyScalar(0.96);
+    if (this.restTimer > 0 && this.restTimer < 0.7) {
+      this.ax *= 0.25;
+      this.ay *= 0.25;
+      this.vx *= 0.94;
+      this.vy *= 0.94;
     }
 
-    this.velocity.addScaledVector(this.acceleration, dt);
+    this.vx += this.ax * dt;
+    this.vy += this.ay * dt;
 
-    const speed = this.velocity.length();
-    const targetSpeed = this.restTimer > 0 && this.restTimer < 0.8 ? 0.4 : this.cruiseSpeed;
+    const speed = Math.hypot(this.vx, this.vy);
+    const targetSpeed = this.restTimer > 0 && this.restTimer < 0.7 ? 12 : this.cruiseSpeed;
     if (speed > 0.001) {
-      const adjusted = THREE.MathUtils.lerp(speed, targetSpeed, 0.04);
-      this.velocity.setLength(clamp(adjusted, 0.2, this.maxSpeed));
+      const adjusted = speed + (targetSpeed - speed) * 0.05;
+      this.vx = (this.vx / speed) * clamp(adjusted, 8, this.maxSpeed);
+      this.vy = (this.vy / speed) * clamp(adjusted, 8, this.maxSpeed);
     }
 
-    this.position.addScaledVector(this.velocity, dt);
-    this.position.x = clamp(this.position.x, -BOUNDS.x, BOUNDS.x);
-    this.position.y = clamp(this.position.y, -BOUNDS.y, BOUNDS.y);
-    this.position.z = clamp(this.position.z, -BOUNDS.z, BOUNDS.z);
+    this.x += this.vx * dt;
+    this.y += this.vy * dt;
+    this.x = clamp(this.x, -bounds.x, bounds.x);
+    this.y = clamp(this.y, -bounds.y, bounds.y);
 
-    this.mesh.position.copy(this.position);
+    const desiredHeading = Math.atan2(this.vy, this.vx);
+    let diff = desiredHeading - this.heading;
+    while (diff > Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    this.heading += clamp(diff, -this.maxTurnRate * dt, this.maxTurnRate * dt);
 
-    if (this.velocity.lengthSq() > 0.01) {
-      const desiredHeading = Math.atan2(this.velocity.z, this.velocity.x);
-      let headingDiff = desiredHeading - this.heading;
-      while (headingDiff > Math.PI) headingDiff -= Math.PI * 2;
-      while (headingDiff < -Math.PI) headingDiff += Math.PI * 2;
+    const swimSpeed = Math.hypot(this.vx, this.vy);
+    this.tailPhase += dt * (5 + swimSpeed * 0.06);
+  }
 
-      this.heading += clamp(headingDiff, -this.maxTurnRate * dt, this.maxTurnRate * dt);
+  draw() {
+    const tailSwing = Math.sin(this.tailPhase) * (0.35 + Math.hypot(this.vx, this.vy) * 0.004);
+    const s = this.size;
 
-      const desiredPitch = Math.atan2(
-        this.velocity.y,
-        Math.hypot(this.velocity.x, this.velocity.z)
-      );
-      this.pitch = THREE.MathUtils.lerp(this.pitch, desiredPitch * 0.45, 0.08);
-      this.bank = THREE.MathUtils.lerp(this.bank, clamp(-headingDiff * 1.4, -0.42, 0.42), 0.1);
+    ctx.save();
+    ctx.translate(width / 2 + this.x, height / 2 + this.y);
+    ctx.rotate(this.heading);
 
-      this.mesh.rotation.set(this.pitch, this.heading - Math.PI / 2, this.bank);
-    }
+    ctx.fillStyle = this.color;
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.2)";
+    ctx.lineWidth = 1.5;
 
-    const swimSpeed = this.velocity.length();
-    const beatFreq = 4 + swimSpeed * 1.6;
-    this.tailPhase += dt * beatFreq;
-    const tailSwing = Math.sin(this.tailPhase) * (0.25 + swimSpeed * 0.12);
+    ctx.beginPath();
+    ctx.moveTo(s * 1.1, 0);
+    ctx.quadraticCurveTo(0, -s * 0.55, -s * 0.95, 0);
+    ctx.quadraticCurveTo(0, s * 0.55, s * 1.1, 0);
+    ctx.fill();
+    ctx.stroke();
 
-    const { tail, dorsal, leftFin, rightFin } = this.mesh.userData.parts;
-    tail.rotation.y = tailSwing;
-    dorsal.rotation.z = Math.sin(this.tailPhase * 0.5) * 0.08;
-    leftFin.rotation.y = 0.35 + Math.sin(this.tailPhase * 0.5) * 0.15;
-    rightFin.rotation.y = -0.35 - Math.sin(this.tailPhase * 0.5) * 0.15;
+    ctx.beginPath();
+    ctx.moveTo(-s * 0.95, 0);
+    ctx.lineTo(-s * 1.55, -s * 0.45 + tailSwing * s);
+    ctx.lineTo(-s * 1.55, s * 0.45 + tailSwing * s);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(0, -s * 0.2);
+    ctx.lineTo(-s * 0.3, -s * 0.75);
+    ctx.lineTo(s * 0.15, -s * 0.2);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = "#111";
+    ctx.beginPath();
+    ctx.arc(s * 0.45, -s * 0.12, s * 0.1, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#fff";
+    ctx.font = `bold ${s * 0.42}px system-ui, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(this.label, 0, s * 0.05);
+
+    ctx.restore();
   }
 }
 
-const fishes = [
-  new Fish({ color: 0x3ecf6e, label: "A", start: [-6, 0.5, 2] }),
-  new Fish({ color: 0x4da3ff, label: "B", start: [5, -0.5, -3] }),
-];
+let fishA;
+let fishB;
+let lastTime = performance.now();
 
-fishes.forEach((fish) => scene.add(fish.mesh));
-
-const labels = new Map();
-const labelLayer = document.createElement("div");
-labelLayer.className = "fish-labels";
-document.getElementById("app").appendChild(labelLayer);
-
-const labelStyle = document.createElement("style");
-labelStyle.textContent = `
-  .fish-labels {
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    overflow: hidden;
-  }
-  .fish-label {
-    position: absolute;
-    transform: translate(-50%, -50%);
-    width: 1.5rem;
-    height: 1.5rem;
-    border-radius: 50%;
-    display: grid;
-    place-items: center;
-    font-size: 0.8rem;
-    font-weight: 700;
-    color: #041018;
-    border: 2px solid rgba(255, 255, 255, 0.85);
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
-  }
-  .fish-label-a { background: #3ecf6e; }
-  .fish-label-b { background: #4da3ff; }
-`;
-document.head.appendChild(labelStyle);
-
-fishes.forEach((fish) => {
-  const el = document.createElement("span");
-  el.className = `fish-label fish-label-${fish.label.toLowerCase()}`;
-  el.textContent = fish.label;
-  labelLayer.appendChild(el);
-  labels.set(fish, el);
-});
-
-const clock = new THREE.Clock();
-
-function resize() {
-  const width = window.innerWidth;
-  const height = window.innerHeight;
-  camera.aspect = width / height;
-  camera.updateProjectionMatrix();
-  renderer.setSize(width, height, false);
+function initFish() {
+  fishA = new Fish({ color: "#3ecf6e", label: "A", x: -120, y: 30 });
+  fishB = new Fish({ color: "#4da3ff", label: "B", x: 100, y: -40 });
 }
 
-function updateLabels() {
-  labels.forEach((el, fish) => {
-    tempVec.copy(fish.position);
-    tempVec.y += 1.2;
-    tempVec.project(camera);
+function initBubbles() {
+  bubbles.length = 0;
+  const count = width < 768 ? 18 : 30;
+  for (let i = 0; i < count; i += 1) {
+    bubbles.push({
+      x: randomRange(-width * 0.5, width * 0.5),
+      y: randomRange(-height * 0.5, height * 0.5),
+      r: randomRange(2, 6),
+      speed: randomRange(12, 28),
+      wobble: randomRange(0, Math.PI * 2),
+    });
+  }
+}
 
-    const visible = tempVec.z > -1 && tempVec.z < 1;
-    el.style.display = visible ? "grid" : "none";
-    el.style.left = `${(tempVec.x * 0.5 + 0.5) * window.innerWidth}px`;
-    el.style.top = `${(-tempVec.y * 0.5 + 0.5) * window.innerHeight}px`;
+function drawBackground(time) {
+  const gradient = ctx.createLinearGradient(0, 0, 0, height);
+  gradient.addColorStop(0, "#0d2845");
+  gradient.addColorStop(1, "#061018");
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.fillStyle = "rgba(255, 255, 255, 0.06)";
+  bubbles.forEach((bubble) => {
+    bubble.y -= bubble.speed * 0.016;
+    bubble.x += Math.sin(time * 0.8 + bubble.wobble) * 0.3;
+    if (bubble.y < -height * 0.55) {
+      bubble.y = height * 0.55;
+      bubble.x = randomRange(-width * 0.5, width * 0.5);
+    }
+    ctx.beginPath();
+    ctx.arc(width / 2 + bubble.x, height / 2 + bubble.y, bubble.r, 0, Math.PI * 2);
+    ctx.fill();
   });
+
+  ctx.strokeStyle = "rgba(120, 180, 220, 0.08)";
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 6; i += 1) {
+    const y = height * 0.2 + i * height * 0.12 + Math.sin(time * 0.3 + i) * 8;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    for (let x = 0; x <= width; x += 40) {
+      ctx.lineTo(x, y + Math.sin(x * 0.01 + time + i) * 6);
+    }
+    ctx.stroke();
+  }
 }
 
-function animate() {
-  const dt = Math.min(clock.getDelta(), 0.05);
-  const time = clock.elapsedTime;
+function animate(now) {
+  const dt = Math.min((now - lastTime) / 1000, 0.05);
+  lastTime = now;
+  const time = now / 1000;
 
-  fishes[0].update(dt, fishes[1], time);
-  fishes[1].update(dt, fishes[0], time);
+  drawBackground(time);
+  fishA.update(dt, fishB, time);
+  fishB.update(dt, fishA, time);
+  fishA.draw();
+  fishB.draw();
 
-  const mid = tempVec.copy(fishes[0].position).add(fishes[1].position).multiplyScalar(0.5);
-  camera.position.x = mid.x + Math.sin(time * 0.12) * 4;
-  camera.position.y = 5 + Math.sin(time * 0.08) * 1.2;
-  camera.position.z = 24 + Math.cos(time * 0.1) * 2;
-  camera.lookAt(mid.x, mid.y * 0.5, mid.z);
-
-  renderer.render(scene, camera);
-  updateLabels();
   requestAnimationFrame(animate);
 }
 
-window.addEventListener("resize", resize);
+window.addEventListener("resize", () => {
+  resize();
+  initFish();
+  initBubbles();
+});
+
 resize();
-animate();
+initFish();
+initBubbles();
+requestAnimationFrame(animate);
