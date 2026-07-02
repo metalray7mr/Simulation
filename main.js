@@ -66,6 +66,10 @@ function bodyHalfWidth(t, halfWidth) {
   return halfWidth * snout * belly * peduncle;
 }
 
+function getBounds() {
+  return { x: width * 0.42, y: height * 0.38 };
+}
+
 class Fish {
   constructor({ color, label, x, y }) {
     this.color = color;
