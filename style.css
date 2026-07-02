@@ -1,0 +1,114 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #0a1628;
+  color: #e8f4ff;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#app {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  height: 100dvh;
+}
+
+#scene {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+
+.hud,
+.legend {
+  position: absolute;
+  left: 0;
+  right: 0;
+  padding: 0.85rem 1rem;
+  pointer-events: none;
+}
+
+.hud {
+  top: 0;
+  background: linear-gradient(180deg, rgba(4, 12, 24, 0.82), transparent);
+}
+
+.hud h1 {
+  margin: 0;
+  font-size: clamp(1.1rem, 4vw, 1.6rem);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.hud p {
+  margin: 0.35rem 0 0;
+  font-size: clamp(0.8rem, 2.8vw, 0.95rem);
+  opacity: 0.82;
+}
+
+.legend {
+  bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: center;
+  padding-bottom: max(0.85rem, env(safe-area-inset-bottom));
+  background: linear-gradient(0deg, rgba(4, 12, 24, 0.88), transparent);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.4rem 0.7rem;
+  border-radius: 999px;
+  font-size: clamp(0.72rem, 2.5vw, 0.85rem);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(8px);
+}
+
+.chip::before {
+  content: "";
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.chip-a::before {
+  background: #3ecf6e;
+  box-shadow: 0 0 8px rgba(62, 207, 110, 0.7);
+}
+
+.chip-b::before {
+  background: #4da3ff;
+  box-shadow: 0 0 8px rgba(77, 163, 255, 0.7);
+}
+
+.chip-neutral::before {
+  background: #9aa3ad;
+}
+
+@media (max-width: 480px) {
+  .hud,
+  .legend {
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
+
+  .legend {
+    justify-content: flex-start;
+  }
+}
