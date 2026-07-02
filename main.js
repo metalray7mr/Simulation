@@ -45,8 +45,25 @@ function resize() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
-function getBounds() {
-  return { x: width * 0.42, y: height * 0.38 };
+function rgba(hex, alpha) {
+  const { r, g, b } = hexToRgb(hex);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function spineAngleAt(spine, i) {
+  const p = spine[i];
+  if (i === 0) return Math.atan2(spine[1].y - p.y, spine[1].x - p.x);
+  if (i === spine.length - 1) {
+    return Math.atan2(p.y - spine[i - 1].y, p.x - spine[i - 1].x);
+  }
+  return Math.atan2(spine[i + 1].y - spine[i - 1].y, spine[i + 1].x - spine[i - 1].x);
+}
+
+function bodyHalfWidth(t, halfWidth) {
+  const snout = t < 0.1 ? 0.32 + (t / 0.1) * 0.68 : 1;
+  const belly = t < 0.52 ? 1 : 1 - ((t - 0.52) / 0.22) * 0.42;
+  const peduncle = t > 0.78 ? 1 - ((t - 0.78) / 0.22) * 0.62 : 1;
+  return halfWidth * snout * belly * peduncle;
 }
 
 class Fish {
@@ -57,8 +74,8 @@ class Fish {
     this.belly = shade(color, 0.45);
     this.label = label;
 
-    this.segmentCount = 18;
-    this.segmentSpacing = width < 768 ? 5.4 : 6.4;
+    this.segmentCount = 24;
+    this.segmentSpacing = width < 768 ? 5.8 : 6.8;
     this.spine = [];
     for (let i = 0; i < this.segmentCount; i += 1) {
       this.spine.push({ x, y });
@@ -86,7 +103,8 @@ class Fish {
     this.burstTimer = randomRange(4, 9);
     this.dartTimer = 0;
     this.state = "cruise";
-    this.size = width < 768 ? 1.65 : 2.05;
+    this.size = width < 768 ? 1.75 : 2.2;
+    this.thrustPhase = 0;
 
     this.personality = {
       curiosity: randomRange(0.35, 0.9),
@@ -198,12 +216,19 @@ class Fish {
 
   updateSpine(dt) {
     const speed = Math.hypot(this.vx, this.vy);
-    const waveAmp = this.state === "hover" ? 0.08 : 0.14 + speed * 0.0018;
-    const waveFreq = this.state === "hover" ? 2.2 : 4.5 + speed * 0.04;
+    const waveAmp = this.state === "hover" ? 0.05 : 0.11 + speed * 0.0022;
+    const waveFreq = this.state === "hover" ? 1.8 : 3.8 + speed * 0.045;
     this.tailPhase += dt * waveFreq;
+    this.thrustPhase = Math.sin(this.tailPhase);
 
     this.head.x += this.vx * dt;
     this.head.y += this.vy * dt;
+
+    if (speed > 2 && this.state !== "hover") {
+      const thrust = this.thrustPhase * speed * 0.0025;
+      this.vx += Math.cos(this.heading) * thrust;
+      this.vy += Math.sin(this.heading) * thrust;
+    }
 
     for (let i = 1; i < this.spine.length; i += 1) {
       const prev = this.spine[i - 1];
@@ -212,18 +237,20 @@ class Fish {
       const dy = prev.y - seg.y;
       const dist = Math.hypot(dx, dy) || 0.001;
       const t = clamp(dist / this.segmentSpacing, 0, 1);
-      const follow = 0.22 + (i / this.spine.length) * 0.18;
+      const follow = 0.28 + (i / this.spine.length) * 0.22;
 
       let tx = prev.x - (dx / dist) * this.segmentSpacing;
       let ty = prev.y - (dy / dist) * this.segmentSpacing;
 
-      const wave = Math.sin(this.tailPhase - i * 0.55) * waveAmp * i * this.segmentSpacing;
+      const progress = i / (this.spine.length - 1);
+      const amp = Math.pow(progress, 2.4) * waveAmp * this.segmentSpacing * 2.8;
+      const wave = Math.sin(this.tailPhase - i * 0.72) * amp;
       const angle = Math.atan2(dy, dx);
       tx += Math.cos(angle + Math.PI / 2) * wave;
       ty += Math.sin(angle + Math.PI / 2) * wave;
 
-      seg.x = lerp(seg.x, tx, follow + (1 - t) * 0.2);
-      seg.y = lerp(seg.y, ty, follow + (1 - t) * 0.2);
+      seg.x = lerp(seg.x, tx, follow + (1 - t) * 0.15);
+      seg.y = lerp(seg.y, ty, follow + (1 - t) * 0.15);
     }
   }
 
@@ -319,17 +346,12 @@ class Fish {
     for (let i = 0; i < pts.length; i += 1) {
       const p = pts[i];
       const t = i / (pts.length - 1);
-      const w = halfWidth * (1 - t * 0.75) * (1 - Math.pow(t, 1.6) * 0.35);
-      let angle;
-
-      if (i === 0) angle = Math.atan2(pts[1].y - p.y, pts[1].x - p.x);
-      else if (i === pts.length - 1) angle = Math.atan2(p.y - pts[i - 1].y, p.x - pts[i - 1].x);
-      else angle = Math.atan2(pts[i + 1].y - pts[i - 1].y, pts[i + 1].x - pts[i - 1].x);
-
+      const w = bodyHalfWidth(t, halfWidth);
+      const angle = spineAngleAt(pts, i);
       const nx = -Math.sin(angle);
       const ny = Math.cos(angle);
       top.push({ x: p.x + nx * w, y: p.y + ny * w });
-      bot.push({ x: p.x - nx * w, y: p.y - ny * w });
+      bot.push({ x: p.x - nx * w * 0.88, y: p.y - ny * w * 0.88 });
     }
 
     ctx.moveTo(top[0].x, top[0].y);
@@ -351,135 +373,288 @@ class Fish {
     ctx.closePath();
   }
 
+  drawScales(halfWidth, s) {
+    const pts = this.spine;
+    for (let i = 3; i < pts.length - 5; i += 1) {
+      const t = i / (pts.length - 1);
+      const p = pts[i];
+      const angle = spineAngleAt(pts, i);
+      const w = bodyHalfWidth(t, halfWidth);
+      const nx = -Math.sin(angle);
+      const ny = Math.cos(angle);
+      const rows = 2;
+      for (let r = 0; r < rows; r += 1) {
+        const offset = (r - 0.5) * w * 0.55;
+        const sx = p.x + nx * offset;
+        const sy = p.y + ny * offset;
+        const scaleW = 2.8 * s * (1 - t * 0.35);
+        const scaleH = 2.1 * s * (1 - t * 0.35);
+        ctx.beginPath();
+        ctx.ellipse(sx, sy, scaleW, scaleH, angle - 0.2, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+  }
+
+  drawFinRays(px, py, angle, len, width, flutter, rays, alpha) {
+    ctx.save();
+    ctx.translate(px, py);
+    ctx.rotate(angle);
+    ctx.globalAlpha = alpha;
+    for (let i = 0; i < rays; i += 1) {
+      const t = i / (rays - 1);
+      const spread = (t - 0.5) * width;
+      ctx.strokeStyle = rgba(this.dark, 0.85);
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.quadraticCurveTo(
+        -len * 0.45,
+        spread + flutter * spread * 0.6,
+        -len,
+        spread * 0.35 + flutter * 2
+      );
+      ctx.stroke();
+    }
+    ctx.fillStyle = rgba(this.color, 0.55);
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.quadraticCurveTo(-len * 0.5, -width * 0.5 + flutter, -len, -width * 0.2);
+    ctx.quadraticCurveTo(-len * 0.5, width * 0.5 - flutter, 0, 0);
+    ctx.fill();
+    ctx.restore();
+  }
+
   draw() {
     const cx = width / 2;
     const cy = height / 2;
     const s = this.size;
+    const hw = 17 * s;
     const head = this.spine[0];
-    const neck = this.spine[2];
+    const snout = this.spine[1];
+    const neck = this.spine[3];
     const tail = this.spine[this.spine.length - 1];
-    const tailBase = this.spine[this.spine.length - 3];
-    const heading = Math.atan2(neck.y - head.y, neck.x - head.x);
-    const tailAngle = Math.atan2(tail.y - tailBase.y, tail.x - tailBase.x);
-    const tailSwing = Math.sin(this.tailPhase) * (0.35 + Math.hypot(this.vx, this.vy) * 0.003);
-    const finFlutter = Math.sin(this.finPhase) * 0.35;
+    const tailBase = this.spine[this.spine.length - 4];
+    const peduncle = this.spine[this.spine.length - 2];
+    const heading = Math.atan2(snout.y - head.y, snout.x - head.x);
+    const tailAngle = Math.atan2(tail.y - peduncle.y, tail.x - peduncle.x);
+    const speed = Math.hypot(this.vx, this.vy);
+    const tailSwing = this.thrustPhase * (0.4 + speed * 0.004);
+    const finFlutter = Math.sin(this.finPhase) * 0.4;
 
     ctx.save();
     ctx.translate(cx, cy);
 
-    const grad = ctx.createLinearGradient(head.x, head.y - 20, head.x, head.y + 20);
-    grad.addColorStop(0, this.light);
-    grad.addColorStop(0.45, this.color);
-    grad.addColorStop(1, this.belly);
-
-    ctx.fillStyle = grad;
-    ctx.strokeStyle = this.dark;
-    ctx.lineWidth = 1.2;
-    ctx.beginPath();
-    this.drawBodyPath(16 * s);
-    ctx.fill();
-    ctx.stroke();
-
     ctx.save();
-    ctx.globalAlpha = 0.15;
+    ctx.globalAlpha = 0.18;
     ctx.fillStyle = "#000";
+    ctx.filter = "blur(4px)";
     ctx.beginPath();
-    ctx.ellipse(head.x + 2, head.y + 8 * s, 14 * s, 4 * s, heading, 0, Math.PI * 2);
+    ctx.ellipse(head.x + 4, head.y + 10 * s, 18 * s, 5 * s, heading, 0, Math.PI * 2);
     ctx.fill();
+    ctx.filter = "none";
     ctx.restore();
 
-    ctx.strokeStyle = "rgba(255,255,255,0.12)";
-    ctx.lineWidth = 0.8;
-    for (let i = 2; i < this.spine.length - 2; i += 3) {
+    ctx.save();
+    ctx.beginPath();
+    this.drawBodyPath(hw);
+    ctx.clip();
+
+    const bodyGrad = ctx.createLinearGradient(
+      head.x + Math.cos(heading + Math.PI / 2) * 20,
+      head.y + Math.sin(heading + Math.PI / 2) * 20,
+      head.x - Math.cos(heading + Math.PI / 2) * 20,
+      head.y - Math.sin(heading + Math.PI / 2) * 20
+    );
+    bodyGrad.addColorStop(0, this.dark);
+    bodyGrad.addColorStop(0.25, this.color);
+    bodyGrad.addColorStop(0.55, this.light);
+    bodyGrad.addColorStop(0.82, this.belly);
+    bodyGrad.addColorStop(1, shade(this.belly, 0.15));
+    ctx.fillStyle = bodyGrad;
+    ctx.fill();
+
+    const flankGrad = ctx.createLinearGradient(head.x - 30, head.y, head.x + 30, head.y);
+    flankGrad.addColorStop(0, rgba(this.light, 0));
+    flankGrad.addColorStop(0.45, rgba("#ffffff", 0.12));
+    flankGrad.addColorStop(0.55, rgba("#ffffff", 0.18));
+    flankGrad.addColorStop(1, rgba(this.light, 0));
+    ctx.fillStyle = flankGrad;
+    ctx.fill();
+
+    ctx.strokeStyle = rgba("#ffffff", 0.07);
+    ctx.lineWidth = 0.7;
+    this.drawScales(hw, s);
+
+    ctx.strokeStyle = rgba(this.light, 0.35);
+    ctx.lineWidth = 1.8;
+    ctx.beginPath();
+    for (let i = 2; i < this.spine.length - 3; i += 1) {
       const p = this.spine[i];
-      const a = Math.atan2(this.spine[i + 1].y - this.spine[i - 1].y, this.spine[i + 1].x - this.spine[i - 1].x);
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, 2.8 * s, a - 0.9, a + 0.9);
-      ctx.stroke();
+      if (i === 2) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
     }
+    ctx.stroke();
+    ctx.restore();
 
-    ctx.strokeStyle = "rgba(255,255,255,0.06)";
-    ctx.lineWidth = 1;
-    for (let i = 3; i < this.spine.length - 4; i += 2) {
-      const p = this.spine[i];
-      const a = Math.atan2(this.spine[i + 1].y - this.spine[i - 1].y, this.spine[i + 1].x - this.spine[i - 1].x);
-      ctx.beginPath();
-      ctx.moveTo(p.x, p.y);
-      ctx.lineTo(p.x - Math.cos(a) * 8 * s, p.y - Math.sin(a) * 8 * s);
-      ctx.stroke();
-    }
+    ctx.strokeStyle = rgba(this.dark, 0.7);
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    this.drawBodyPath(hw);
+    ctx.stroke();
 
-    const drawFin = (px, py, angle, len, spread, alpha) => {
-      ctx.save();
-      ctx.translate(px, py);
-      ctx.rotate(angle);
-      ctx.globalAlpha = alpha;
-      ctx.fillStyle = this.dark;
-      ctx.beginPath();
-      ctx.moveTo(0, 0);
-      ctx.quadraticCurveTo(-len * 0.4, -spread + finFlutter * spread, -len, -spread * 0.2);
-      ctx.quadraticCurveTo(-len * 0.35, spread - finFlutter * spread, 0, 0);
-      ctx.fill();
-      ctx.restore();
-    };
+    const dorsalPts = [5, 7, 9, 11];
+    dorsalPts.forEach((idx, i) => {
+      const p = this.spine[idx];
+      const a = spineAngleAt(this.spine, idx) - Math.PI / 2;
+      const h = (9 - i * 1.2) * s;
+      this.drawFinRays(p.x, p.y, a, h, 3.5 * s, finFlutter * 0.3, 4, 0.8);
+    });
 
-    drawFin(head.x + Math.cos(heading) * 8, head.y + Math.sin(heading) * 8, heading + 1.4, 12 * s, 7 * s, 0.85);
-    drawFin(head.x + Math.cos(heading) * 8, head.y + Math.sin(heading) * 8, heading - 1.4, 12 * s, 7 * s, 0.85);
+    const analPt = this.spine[10];
+    this.drawFinRays(
+      analPt.x, analPt.y,
+      spineAngleAt(this.spine, 10) + Math.PI / 2,
+      10 * s, 3 * s, finFlutter * 0.25, 4, 0.7
+    );
 
-    const dorsalBase = this.spine[5];
-    const dorsalAngle = Math.atan2(this.spine[6].y - this.spine[4].y, this.spine[6].x - this.spine[4].x) - Math.PI / 2;
-    drawFin(dorsalBase.x, dorsalBase.y, dorsalAngle, 16 * s, 5 * s, 0.75);
+    this.drawFinRays(
+      head.x + Math.cos(heading) * 6 * s,
+      head.y + Math.sin(heading) * 6 * s,
+      heading + 1.55,
+      14 * s, 8 * s, finFlutter, 5, 0.82
+    );
+    this.drawFinRays(
+      head.x + Math.cos(heading) * 6 * s,
+      head.y + Math.sin(heading) * 6 * s,
+      heading - 1.55,
+      14 * s, 8 * s, finFlutter, 5, 0.82
+    );
+
+    const pelvic = this.spine[6];
+    this.drawFinRays(
+      pelvic.x, pelvic.y,
+      spineAngleAt(this.spine, 6) + Math.PI / 2 + 0.3,
+      9 * s, 4 * s, finFlutter * 0.5, 3, 0.65
+    );
 
     ctx.save();
     ctx.translate(tail.x, tail.y);
     ctx.rotate(tailAngle);
-    ctx.fillStyle = this.dark;
+    const fork = (14 + tailSwing * 10) * s;
+    const forkGrad = ctx.createLinearGradient(-fork, 0, 0, 0);
+    forkGrad.addColorStop(0, this.dark);
+    forkGrad.addColorStop(1, this.color);
+    ctx.fillStyle = forkGrad;
     ctx.beginPath();
     ctx.moveTo(0, 0);
-    ctx.lineTo(-16 * s, (-10 + tailSwing * 8) * s);
-    ctx.lineTo(-8 * s, 0);
-    ctx.lineTo(-16 * s, (10 + tailSwing * 8) * s);
-    ctx.closePath();
+    ctx.quadraticCurveTo(-fork * 0.55, -fork * 0.75, -fork, -fork * 0.55);
+    ctx.quadraticCurveTo(-fork * 0.35, 0, 0, 0);
+    ctx.quadraticCurveTo(-fork * 0.55, fork * 0.75, -fork, fork * 0.55);
+    ctx.quadraticCurveTo(-fork * 0.35, 0, 0, 0);
     ctx.fill();
+    ctx.strokeStyle = rgba(this.dark, 0.8);
+    ctx.lineWidth = 0.8;
+    for (let r = 0; r < 5; r += 1) {
+      const t = r / 4;
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(-fork, (-fork * 0.55) * (1 - t * 2));
+      ctx.stroke();
+    }
     ctx.restore();
 
-    const eyeX = head.x + Math.cos(heading) * 10 * s;
-    const eyeY = head.y + Math.sin(heading) * 10 * s;
-    ctx.fillStyle = "#0a0f14";
+    const noseX = head.x + Math.cos(heading) * 16 * s;
+    const noseY = head.y + Math.sin(heading) * 16 * s;
+    ctx.fillStyle = this.dark;
     ctx.beginPath();
-    ctx.ellipse(eyeX, eyeY, 3.8 * s, 3 * s, heading, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "#4a6741";
-    ctx.beginPath();
-    ctx.arc(eyeX, eyeY, 2.2 * s, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "#fff";
-    ctx.beginPath();
-    ctx.arc(eyeX + Math.cos(heading) * 1.4, eyeY + Math.sin(heading) * 1.4, 1.2 * s, 0, Math.PI * 2);
+    ctx.moveTo(noseX, noseY);
+    ctx.quadraticCurveTo(
+      head.x + Math.cos(heading) * 8 * s - Math.sin(heading) * 5 * s,
+      head.y + Math.sin(heading) * 8 * s + Math.cos(heading) * 5 * s,
+      head.x - Math.cos(heading) * 2 * s,
+      head.y - Math.sin(heading) * 2 * s
+    );
+    ctx.quadraticCurveTo(
+      head.x + Math.cos(heading) * 8 * s + Math.sin(heading) * 5 * s,
+      head.y + Math.sin(heading) * 8 * s - Math.cos(heading) * 5 * s,
+      noseX, noseY
+    );
     ctx.fill();
 
-    ctx.strokeStyle = this.dark;
+    const opercX = head.x - Math.cos(heading) * 3 * s;
+    const opercY = head.y - Math.sin(heading) * 3 * s;
+    ctx.fillStyle = rgba(this.color, 0.9);
+    ctx.strokeStyle = rgba(this.dark, 0.6);
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.arc(head.x + Math.cos(heading) * 14 * s, head.y + Math.sin(heading) * 14 * s, 4 * s, heading + 0.3, heading + 1.2);
+    ctx.arc(opercX, opercY, 7 * s, heading - 1.2, heading + 0.5);
+    ctx.arc(opercX - Math.cos(heading) * 2, opercY - Math.sin(heading) * 2, 6 * s, heading + 0.5, heading + 1.8);
+    ctx.fill();
     ctx.stroke();
 
-    const gillOpen = 0.5 + Math.sin(this.gillPhase) * 0.2;
-    ctx.strokeStyle = `rgba(0,0,0,${0.18 * gillOpen})`;
-    ctx.lineWidth = 1;
-    for (let g = 0; g < 3; g += 1) {
-      const gx = head.x - Math.cos(heading) * (4 + g * 2.5) * s;
-      const gy = head.y - Math.sin(heading) * (4 + g * 2.5) * s;
+    const gillOpen = 0.55 + Math.sin(this.gillPhase) * 0.25;
+    ctx.strokeStyle = rgba("#000000", 0.22 * gillOpen);
+    for (let g = 0; g < 4; g += 1) {
+      const gx = head.x - Math.cos(heading) * (5 + g * 2.2) * s;
+      const gy = head.y - Math.sin(heading) * (5 + g * 2.2) * s;
       ctx.beginPath();
-      ctx.arc(gx, gy, 3 * s, heading - 0.5, heading + 0.5);
+      ctx.arc(gx, gy, 4.5 * s, heading - 0.6, heading + 0.4);
       ctx.stroke();
     }
 
-    ctx.fillStyle = "rgba(255,255,255,0.92)";
-    ctx.font = `bold ${11 * s}px system-ui, sans-serif`;
+    const eyeX = head.x + Math.cos(heading) * 11 * s;
+    const eyeY = head.y + Math.sin(heading) * 11 * s;
+    ctx.fillStyle = "#e8eef2";
+    ctx.beginPath();
+    ctx.ellipse(eyeX, eyeY, 4.2 * s, 3.4 * s, heading, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = rgba(this.dark, 0.8);
+    ctx.lineWidth = 0.8;
+    ctx.stroke();
+    ctx.fillStyle = "#2d4a32";
+    ctx.beginPath();
+    ctx.arc(eyeX + Math.cos(heading) * 0.5, eyeY + Math.sin(heading) * 0.5, 2.4 * s, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#0a0f14";
+    ctx.beginPath();
+    ctx.arc(eyeX + Math.cos(heading) * 1, eyeY + Math.sin(heading) * 1, 1.4 * s, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.beginPath();
+    ctx.arc(eyeX + Math.cos(heading) * 2, eyeY + Math.sin(heading) * 2 - 0.8 * s, 0.9 * s, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = rgba(this.dark, 0.5);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(noseX, noseY);
+    ctx.quadraticCurveTo(
+      head.x + Math.cos(heading) * 12 * s,
+      head.y + Math.sin(heading) * 12 * s + 3 * s,
+      head.x + Math.cos(heading) * 4 * s,
+      head.y + Math.sin(heading) * 4 * s + 4 * s
+    );
+    ctx.stroke();
+
+    ctx.fillStyle = rgba("#ffffff", 0.35);
+    ctx.beginPath();
+    ctx.ellipse(
+      head.x + Math.cos(heading) * 4 * s - Math.sin(heading) * 8 * s,
+      head.y + Math.sin(heading) * 4 * s + Math.cos(heading) * 8 * s,
+      10 * s, 3 * s, heading - 0.4, 0, Math.PI * 2
+    );
+    ctx.fill();
+
+    ctx.fillStyle = "rgba(255,255,255,0.9)";
+    ctx.font = `bold ${10 * s}px system-ui, sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(this.label, head.x - Math.cos(heading) * 2, head.y - Math.sin(heading) * 2);
+    ctx.fillText(
+      this.label,
+      head.x - Math.cos(heading) * 1 * s,
+      head.y - Math.sin(heading) * 1 * s + 5 * s
+    );
 
     ctx.restore();
   }
