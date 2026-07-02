@@ -57,8 +57,8 @@ class Fish {
     this.belly = shade(color, 0.45);
     this.label = label;
 
-    this.segmentCount = 14;
-    this.segmentSpacing = width < 768 ? 4.2 : 5.2;
+    this.segmentCount = 18;
+    this.segmentSpacing = width < 768 ? 5.4 : 6.4;
     this.spine = [];
     for (let i = 0; i < this.segmentCount; i += 1) {
       this.spine.push({ x, y });
@@ -86,7 +86,7 @@ class Fish {
     this.burstTimer = randomRange(4, 9);
     this.dartTimer = 0;
     this.state = "cruise";
-    this.size = width < 768 ? 1 : 1.15;
+    this.size = width < 768 ? 1.65 : 2.05;
 
     this.personality = {
       curiosity: randomRange(0.35, 0.9),
@@ -376,17 +376,36 @@ class Fish {
     ctx.strokeStyle = this.dark;
     ctx.lineWidth = 1.2;
     ctx.beginPath();
-    this.drawBodyPath(13 * s);
+    this.drawBodyPath(16 * s);
     ctx.fill();
     ctx.stroke();
 
-    ctx.strokeStyle = "rgba(255,255,255,0.08)";
+    ctx.save();
+    ctx.globalAlpha = 0.15;
+    ctx.fillStyle = "#000";
+    ctx.beginPath();
+    ctx.ellipse(head.x + 2, head.y + 8 * s, 14 * s, 4 * s, heading, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.strokeStyle = "rgba(255,255,255,0.12)";
     ctx.lineWidth = 0.8;
     for (let i = 2; i < this.spine.length - 2; i += 3) {
       const p = this.spine[i];
       const a = Math.atan2(this.spine[i + 1].y - this.spine[i - 1].y, this.spine[i + 1].x - this.spine[i - 1].x);
       ctx.beginPath();
-      ctx.arc(p.x, p.y, 2.2 * s, a - 0.8, a + 0.8);
+      ctx.arc(p.x, p.y, 2.8 * s, a - 0.9, a + 0.9);
+      ctx.stroke();
+    }
+
+    ctx.strokeStyle = "rgba(255,255,255,0.06)";
+    ctx.lineWidth = 1;
+    for (let i = 3; i < this.spine.length - 4; i += 2) {
+      const p = this.spine[i];
+      const a = Math.atan2(this.spine[i + 1].y - this.spine[i - 1].y, this.spine[i + 1].x - this.spine[i - 1].x);
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(p.x - Math.cos(a) * 8 * s, p.y - Math.sin(a) * 8 * s);
       ctx.stroke();
     }
 
@@ -428,12 +447,22 @@ class Fish {
     const eyeY = head.y + Math.sin(heading) * 10 * s;
     ctx.fillStyle = "#0a0f14";
     ctx.beginPath();
-    ctx.ellipse(eyeX, eyeY, 3.2 * s, 2.6 * s, heading, 0, Math.PI * 2);
+    ctx.ellipse(eyeX, eyeY, 3.8 * s, 3 * s, heading, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#4a6741";
+    ctx.beginPath();
+    ctx.arc(eyeX, eyeY, 2.2 * s, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = "#fff";
     ctx.beginPath();
-    ctx.arc(eyeX + Math.cos(heading) * 1.2, eyeY + Math.sin(heading) * 1.2, 1 * s, 0, Math.PI * 2);
+    ctx.arc(eyeX + Math.cos(heading) * 1.4, eyeY + Math.sin(heading) * 1.4, 1.2 * s, 0, Math.PI * 2);
     ctx.fill();
+
+    ctx.strokeStyle = this.dark;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(head.x + Math.cos(heading) * 14 * s, head.y + Math.sin(heading) * 14 * s, 4 * s, heading + 0.3, heading + 1.2);
+    ctx.stroke();
 
     const gillOpen = 0.5 + Math.sin(this.gillPhase) * 0.2;
     ctx.strokeStyle = `rgba(0,0,0,${0.18 * gillOpen})`;
@@ -456,8 +485,15 @@ class Fish {
   }
 }
 
-const CREATURE_TYPES = ["jellyfish", "minnow", "seahorse", "turtle", "shrimp", "starfish", "crab", "octopus"];
-const creaturePalette = ["#c7a7ff", "#ff9ecf", "#8ed8ff", "#ffd28e", "#b5f0c8", "#f0a6a6", "#d4c4a8"];
+const CREATURE_TYPES = [
+  "jellyfish", "minnow", "seahorse", "turtle", "shrimp", "starfish",
+  "crab", "octopus", "eel", "ray", "squid", "clownfish",
+];
+const creaturePalette = [
+  "#c7a7ff", "#ff9ecf", "#8ed8ff", "#ffd28e", "#b5f0c8",
+  "#f0a6a6", "#d4c4a8", "#ff7e67", "#7ec8e3", "#e8d5b5",
+];
+const scenery = [];
 
 class SeaCreature {
   constructor(type = null) {
@@ -468,9 +504,9 @@ class SeaCreature {
     this.vx = randomRange(-18, 18);
     this.vy = randomRange(-12, 12);
     this.phase = Math.random() * Math.PI * 2;
-    this.scale = randomRange(0.65, 1.25);
-    this.depth = randomRange(0.35, 1);
-    this.alpha = lerp(0.35, 0.85, this.depth);
+    this.scale = randomRange(0.95, 1.75);
+    this.depth = randomRange(0.55, 1);
+    this.alpha = lerp(0.62, 0.95, this.depth);
     this.color = creaturePalette[Math.floor(Math.random() * creaturePalette.length)];
     this.dark = shade(this.color, -0.3);
     this.facing = Math.random() < 0.5 ? 1 : -1;
@@ -479,18 +515,27 @@ class SeaCreature {
     this.ty = this.y;
 
     if (this.type === "minnow") {
-      this.scale *= 0.55;
-      this.vx = randomRange(30, 55) * this.facing;
-      this.alpha *= 0.75;
+      this.scale *= 0.7;
+      this.vx = randomRange(35, 65) * this.facing;
+      this.alpha = 0.8;
     }
-    if (this.type === "turtle") this.scale *= 1.35;
+    if (this.type === "turtle") this.scale *= 1.5;
+    if (this.type === "ray") this.scale *= 1.4;
+    if (this.type === "eel") this.scale *= 1.2;
+    if (this.type === "squid") this.scale *= 1.15;
     if (this.type === "starfish" || this.type === "crab") {
       this.y = b.y * randomRange(0.55, 0.92);
       this.vy = 0;
     }
     if (this.type === "jellyfish") {
-      this.vy = randomRange(-8, -4);
+      this.vy = randomRange(-10, -5);
       this.vx *= 0.35;
+    }
+    if (this.type === "eel") {
+      this.vx = randomRange(20, 40) * this.facing;
+    }
+    if (this.type === "ray") {
+      this.vy = randomRange(-6, 6);
     }
   }
 
@@ -546,16 +591,34 @@ class SeaCreature {
         ax += this.facing * 16;
       }
     }
+    if (this.type === "eel") {
+      ax += Math.sin(time * 0.6 + this.phase) * 14;
+      ay += Math.cos(time * 0.45 + this.phase) * 10;
+    }
+    if (this.type === "ray") {
+      ay += Math.sin(time * 0.5 + this.phase) * 8;
+      ax += Math.cos(time * 0.35 + this.phase) * 6;
+    }
+    if (this.type === "squid") {
+      ay += Math.sin(time * 0.9 + this.phase) * 12 - 3;
+    }
+    if (this.type === "clownfish") {
+      ax += Math.sin(time * 0.7 + this.phase) * 10;
+    }
 
     const maxSpeed = {
-      jellyfish: 16,
-      minnow: 70,
-      seahorse: 14,
-      turtle: 22,
-      shrimp: 48,
-      starfish: 6,
-      crab: 18,
-      octopus: 20,
+      jellyfish: 18,
+      minnow: 80,
+      seahorse: 16,
+      turtle: 26,
+      shrimp: 52,
+      starfish: 7,
+      crab: 20,
+      octopus: 24,
+      eel: 55,
+      ray: 28,
+      squid: 32,
+      clownfish: 42,
     }[this.type];
 
     this.vx += ax * dt;
@@ -593,6 +656,10 @@ class SeaCreature {
       starfish: () => this.drawStarfish(),
       crab: () => this.drawCrab(),
       octopus: () => this.drawOctopus(),
+      eel: () => this.drawEel(),
+      ray: () => this.drawRay(),
+      squid: () => this.drawSquid(),
+      clownfish: () => this.drawClownfish(),
     };
     drawers[this.type]();
     ctx.restore();
@@ -792,6 +859,114 @@ class SeaCreature {
       ctx.stroke();
     }
   }
+
+  drawEel() {
+    ctx.strokeStyle = this.color;
+    ctx.lineWidth = 7;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    for (let i = 0; i <= 10; i += 1) {
+      const t = i / 10;
+      const x = -20 + t * 40;
+      const y = Math.sin(this.phase * 2 + t * 5) * 10;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.fillStyle = this.dark;
+    ctx.beginPath();
+    ctx.arc(18, Math.sin(this.phase * 2 + 5) * 2, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#ffee55";
+    ctx.beginPath();
+    ctx.arc(19, Math.sin(this.phase * 2 + 5) * 2 - 1, 1.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  drawRay() {
+    const flap = Math.sin(this.phase * 3) * 0.25;
+    ctx.fillStyle = this.color;
+    ctx.beginPath();
+    ctx.moveTo(-16, 0);
+    ctx.quadraticCurveTo(0, -14 - flap * 10, 16, 0);
+    ctx.quadraticCurveTo(0, 8, -16, 0);
+    ctx.fill();
+    ctx.strokeStyle = this.dark;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = this.dark;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(0, 14);
+    ctx.lineTo(-3, 20);
+    ctx.lineTo(3, 20);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = "#111";
+    ctx.beginPath();
+    ctx.arc(10, -2, 1.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  drawSquid() {
+    ctx.fillStyle = this.color;
+    ctx.beginPath();
+    ctx.moveTo(-12, 0);
+    ctx.quadraticCurveTo(0, -10, 14, 0);
+    ctx.quadraticCurveTo(0, 8, -12, 0);
+    ctx.fill();
+    ctx.fillStyle = this.dark;
+    ctx.beginPath();
+    ctx.ellipse(8, -1, 5, 4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#111";
+    ctx.beginPath();
+    ctx.arc(10, -2, 1.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = this.dark;
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 5; i += 1) {
+      const spread = (i - 2) * 0.4;
+      ctx.beginPath();
+      ctx.moveTo(-8, 2);
+      for (let t = 0; t <= 1; t += 0.15) {
+        const y = 2 + t * 18;
+        const x = -8 + spread * t * 12 + Math.sin(this.phase * 4 + t * 6 + i) * 4;
+        ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+  }
+
+  drawClownfish() {
+    const w = Math.sin(this.phase * 4) * 2;
+    ctx.fillStyle = "#ff6b35";
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 12, 6, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(-2, -6, 4, 12);
+    ctx.fillRect(4, -5, 3, 10);
+    ctx.fillStyle = "#111";
+    ctx.fillRect(0, -6, 2, 12);
+    ctx.beginPath();
+    ctx.moveTo(-11, 0);
+    ctx.lineTo(-17, -4 + w);
+    ctx.lineTo(-17, 4 - w);
+    ctx.closePath();
+    ctx.fillStyle = "#ff6b35";
+    ctx.fill();
+    ctx.fillStyle = "#111";
+    ctx.beginPath();
+    ctx.arc(7, -2, 1.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#ff6b35";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-2, -6);
+    ctx.lineTo(2, -10);
+    ctx.stroke();
+  }
 }
 
 let fishA;
@@ -801,19 +976,44 @@ let lastTime = performance.now();
 
 function initCreatures() {
   creatures = [];
-  const count = width < 768 ? 12 : 20;
-  for (let i = 0; i < count; i += 1) {
+  CREATURE_TYPES.forEach((type) => {
+    creatures.push(new SeaCreature(type));
+    creatures.push(new SeaCreature(type));
+  });
+
+  const extra = width < 768 ? 18 : 30;
+  for (let i = 0; i < extra; i += 1) {
     creatures.push(new SeaCreature());
   }
-  if (width >= 768) {
-    for (let i = 0; i < 3; i += 1) {
-      const school = new SeaCreature("minnow");
-      school.x += randomRange(-40, 40);
-      school.y += randomRange(-40, 40);
-      creatures.push(school);
+
+  const schools = width < 768 ? 5 : 9;
+  for (let s = 0; s < schools; s += 1) {
+    const baseX = randomRange(-getBounds().x * 0.7, getBounds().x * 0.7);
+    const baseY = randomRange(-getBounds().y * 0.7, getBounds().y * 0.7);
+    for (let i = 0; i < 6; i += 1) {
+      const m = new SeaCreature("minnow");
+      m.x = baseX + randomRange(-35, 35);
+      m.y = baseY + randomRange(-25, 25);
+      creatures.push(m);
     }
   }
+
   creatures.sort((a, b) => a.depth - b.depth);
+}
+
+function initScenery() {
+  scenery.length = 0;
+  const b = getBounds();
+  const count = width < 768 ? 10 : 18;
+  for (let i = 0; i < count; i += 1) {
+    scenery.push({
+      x: randomRange(-b.x, b.x),
+      type: Math.random() < 0.55 ? "seaweed" : "coral",
+      height: randomRange(50, 120),
+      color: creaturePalette[Math.floor(Math.random() * creaturePalette.length)],
+      phase: randomRange(0, Math.PI * 2),
+    });
+  }
 }
 
 function initFish() {
@@ -893,6 +1093,36 @@ function drawBackground(time) {
     }
     ctx.stroke();
   }
+
+  const floorY = height / 2 + getBounds().y * 0.88;
+  scenery.forEach((item) => {
+    const x = width / 2 + item.x;
+    ctx.save();
+    if (item.type === "seaweed") {
+      ctx.strokeStyle = shade(item.color, -0.25);
+      ctx.lineWidth = 3;
+      for (let s = -1; s <= 1; s += 1) {
+        ctx.beginPath();
+        ctx.moveTo(x + s * 8, floorY);
+        for (let t = 0; t <= 1; t += 0.1) {
+          const y = floorY - t * item.height;
+          const wave = Math.sin(time * 1.2 + item.phase + t * 4 + s) * (8 + t * 10);
+          ctx.lineTo(x + s * 8 + wave, y);
+        }
+        ctx.stroke();
+      }
+    } else {
+      ctx.fillStyle = item.color;
+      ctx.globalAlpha = 0.75;
+      for (let b = 0; b < 4; b += 1) {
+        ctx.beginPath();
+        ctx.arc(x + (b - 1.5) * 12, floorY - 8 - b * 6, 8 + b * 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+    ctx.restore();
+  });
 }
 
 function animate(now) {
@@ -919,12 +1149,14 @@ window.addEventListener("resize", () => {
   resize();
   initFish();
   initCreatures();
+  initScenery();
   initBubbles();
 });
 
 resize();
 initFish();
 initCreatures();
+initScenery();
 initBubbles();
 initCaustics();
 requestAnimationFrame(animate);
