@@ -9,6 +9,8 @@ const restartBtn = document.getElementById("restart-btn");
 const scoreLabel = document.getElementById("score-label");
 const sizeLabel = document.getElementById("size-label");
 const finalScoreLabel = document.getElementById("final-score");
+const controlHint = document.getElementById("control-hint");
+const app = document.getElementById("app");
 
 const WORLD_W = 3200;
 const WORLD_H = 2400;
@@ -33,6 +35,7 @@ let dpr = 1;
 let lastTime = 0;
 let gameState = "start";
 let score = 0;
+let invincibleUntil = 0;
 let bubbles = [];
 let caustics = [];
 
@@ -93,6 +96,9 @@ class InputManager {
     this.smoothGyroY = 0;
     this.betaOffset = null;
     this.gammaOffset = null;
+    this.motionOffsetX = null;
+    this.motionOffsetY = null;
+    this.useMotion = false;
 
     window.addEventListener("keydown", (e) => {
       this.keys.add(e.key.toLowerCase());
@@ -108,31 +114,49 @@ class InputManager {
       this.pointerActive = active;
     };
 
-    canvas.addEventListener("pointerdown", (e) => {
-      canvas.setPointerCapture(e.pointerId);
-      onPointer(e.clientX, e.clientY, true);
-    });
-    canvas.addEventListener("pointermove", (e) => {
-      if (this.pointerActive) onPointer(e.clientX, e.clientY, true);
-    });
-    const endPointer = (e) => {
-      if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
-      this.pointerActive = false;
+    const bindPointer = (target) => {
+      target.addEventListener("pointerdown", (e) => {
+        if (gameState !== "playing") return;
+        target.setPointerCapture(e.pointerId);
+        onPointer(e.clientX, e.clientY, true);
+      });
+      target.addEventListener("pointermove", (e) => {
+        if (this.pointerActive) onPointer(e.clientX, e.clientY, true);
+      });
+      const endPointer = (e) => {
+        if (target.hasPointerCapture(e.pointerId)) target.releasePointerCapture(e.pointerId);
+        this.pointerActive = false;
+      };
+      target.addEventListener("pointerup", endPointer);
+      target.addEventListener("pointercancel", endPointer);
     };
-    canvas.addEventListener("pointerup", endPointer);
-    canvas.addEventListener("pointercancel", endPointer);
+
+    bindPointer(canvas);
+    bindPointer(app);
 
     window.addEventListener("deviceorientation", (e) => this.onOrientation(e));
+    window.addEventListener("devicemotion", (e) => this.onMotion(e));
   }
 
   async requestGyroPermission() {
-    if (typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function") {
-      const result = await DeviceOrientationEvent.requestPermission();
-      if (result !== "granted") return false;
+    try {
+      if (typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function") {
+        const result = await DeviceOrientationEvent.requestPermission();
+        if (result !== "granted") return false;
+      }
+      if (typeof DeviceMotionEvent !== "undefined" && typeof DeviceMotionEvent.requestPermission === "function") {
+        const result = await DeviceMotionEvent.requestPermission();
+        if (result !== "granted") return false;
+      }
+    } catch (err) {
+      console.warn("Motion permission error:", err);
+      return false;
     }
     this.gyroActive = true;
     this.betaOffset = null;
     this.gammaOffset = null;
+    this.motionOffsetX = null;
+    this.motionOffsetY = null;
     return true;
   }
 
@@ -142,11 +166,27 @@ class InputManager {
       this.betaOffset = e.beta;
       this.gammaOffset = e.gamma;
     }
-    const beta = clamp(e.beta - this.betaOffset, -45, 45);
-    const gamma = clamp(e.gamma - this.gammaOffset, -45, 45);
-    this.gyroX = gamma / 45;
-    this.gyroY = beta / 45;
+    const beta = clamp(e.beta - this.betaOffset, -40, 40);
+    const gamma = clamp(e.gamma - this.gammaOffset, -40, 40);
+    this.gyroX = gamma / 40;
+    this.gyroY = beta / 40;
     this.gyroActive = true;
+    this.useMotion = false;
+  }
+
+  onMotion(e) {
+    const accel = e.accelerationIncludingGravity;
+    if (!accel || accel.x == null || accel.y == null) return;
+    if (this.motionOffsetX == null) {
+      this.motionOffsetX = accel.x;
+      this.motionOffsetY = accel.y;
+    }
+    const tiltX = clamp(accel.x - this.motionOffsetX, -5, 5);
+    const tiltY = clamp(accel.y - this.motionOffsetY, -5, 5);
+    this.gyroX = tiltX / 5;
+    this.gyroY = tiltY / 5;
+    this.gyroActive = true;
+    this.useMotion = true;
   }
 
   getSteering() {
@@ -154,8 +194,8 @@ class InputManager {
     let sy = 0;
 
     if (this.gyroActive) {
-      this.smoothGyroX = lerp(this.smoothGyroX, this.gyroX, 0.12);
-      this.smoothGyroY = lerp(this.smoothGyroY, this.gyroY, 0.12);
+      this.smoothGyroX = lerp(this.smoothGyroX, this.gyroX, this.useMotion ? 0.18 : 0.14);
+      this.smoothGyroY = lerp(this.smoothGyroY, this.gyroY, this.useMotion ? 0.18 : 0.14);
       sx += this.smoothGyroX;
       sy += this.smoothGyroY;
     }
@@ -171,8 +211,8 @@ class InputManager {
       const dx = this.pointerX - cx;
       const dy = this.pointerY - cy;
       const len = Math.sqrt(dx * dx + dy * dy) || 1;
-      const maxDist = Math.min(width, height) * 0.35;
-      const strength = clamp(len / maxDist, 0, 1);
+      const minDist = 18;
+      const strength = len < minDist ? 0.35 : clamp(len / (Math.min(width, height) * 0.4), 0.35, 1);
       sx += (dx / len) * strength;
       sy += (dy / len) * strength;
     }
@@ -227,7 +267,7 @@ class Fish {
     this.vx += steer.x * accel * dt;
     this.vy += steer.y * accel * dt;
 
-    const friction = 0.92;
+    const friction = 0.96;
     this.vx *= friction;
     this.vy *= friction;
 
@@ -387,8 +427,9 @@ class Fish {
     ctx.fill();
 
     if (this.isPlayer) {
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.35)";
-      ctx.lineWidth = 2;
+      const invincible = performance.now() < invincibleUntil;
+      ctx.strokeStyle = invincible ? "rgba(94, 234, 212, 0.75)" : "rgba(255, 255, 255, 0.35)";
+      ctx.lineWidth = invincible ? 3 : 2;
       ctx.beginPath();
       ctx.ellipse(0, 0, bodyLen * 0.58, bodyH * 1.05, 0, 0, Math.PI * 2);
       ctx.stroke();
@@ -417,7 +458,7 @@ function randomWorldPoint(margin = 80) {
   };
 }
 
-function spawnPointOffscreen(camX, camY, margin = 120) {
+function spawnPointOffscreen(camX, camY, margin = 120, minSize = 0, maxSize = Infinity) {
   const side = Math.floor(Math.random() * 4);
   const viewPad = 80;
   let x;
@@ -438,6 +479,7 @@ function spawnPointOffscreen(camX, camY, margin = 120) {
   return {
     x: clamp(x, 60, WORLD_W - 60),
     y: clamp(y, 60, WORLD_H - 60),
+    size: clamp(randomFishSize(), minSize, maxSize),
   };
 }
 
@@ -449,12 +491,13 @@ function randomFishSize() {
   return randomRange(2.4, 3.5);
 }
 
-function createAIFish(camX, camY, sizeOverride) {
-  const size = sizeOverride ?? randomFishSize();
-  const pos = spawnPointOffscreen(camX, camY);
+function createAIFish(camX, camY, sizeOverride, options = {}) {
+  const { margin = 120, minSize = 0, maxSize = Infinity } = options;
+  const spawn = spawnPointOffscreen(camX, camY, margin, minSize, maxSize);
+  const size = sizeOverride ?? spawn.size;
   const fish = new Fish({
-    x: pos.x,
-    y: pos.y,
+    x: spawn.x,
+    y: spawn.y,
     size,
     color: pickFishColor(),
     isPlayer: false,
@@ -491,6 +534,7 @@ function initCaustics() {
 
 function resetGame() {
   score = 0;
+  invincibleUntil = performance.now() + 3000;
   const start = randomWorldPoint(200);
   player = new Fish({
     x: start.x,
@@ -500,8 +544,11 @@ function resetGame() {
     isPlayer: true,
   });
   aiFish = [];
-  for (let i = 0; i < TARGET_FISH; i += 1) {
-    aiFish.push(createAIFish(player.x, player.y));
+  for (let i = 0; i < 12; i += 1) {
+    aiFish.push(createAIFish(player.x, player.y, randomRange(0.45, 0.85)));
+  }
+  for (let i = 0; i < 8; i += 1) {
+    aiFish.push(createAIFish(player.x, player.y, undefined, { margin: 220, maxSize: 1.4 }));
   }
   updateHUD();
 }
@@ -531,11 +578,18 @@ function maintainPopulation(camX, camY) {
   aiFish = aiFish.filter((f) => dist(f.x, f.y, camX, camY) < despawnDist + 200);
 
   while (aiFish.length < TARGET_FISH) {
-    aiFish.push(createAIFish(camX, camY));
+    const far = aiFish.length > 14;
+    aiFish.push(
+      createAIFish(camX, camY, undefined, {
+        margin: far ? 220 : 140,
+        maxSize: far ? 3.5 : 1.8,
+      }),
+    );
   }
 }
 
-function handleCollisions() {
+function handleCollisions(now) {
+  const invincible = now < invincibleUntil;
   for (let i = aiFish.length - 1; i >= 0; i -= 1) {
     const fish = aiFish[i];
     if (!player.overlaps(fish)) continue;
@@ -546,7 +600,7 @@ function handleCollisions() {
       aiFish.splice(i, 1);
       aiFish.push(createAIFish(player.x, player.y, randomRange(0.5, Math.min(player.size * 0.85, 2.5))));
       updateHUD();
-    } else if (fish.canEat(player)) {
+    } else if (!invincible && fish.canEat(player)) {
       finalScoreLabel.textContent = `Score: ${score}`;
       setState("gameover");
       return;
@@ -619,7 +673,7 @@ function animate(now) {
     const camX = clamp(player.x, width / 2, WORLD_W - width / 2);
     const camY = clamp(player.y, height / 2, WORLD_H - height / 2);
 
-    handleCollisions();
+    handleCollisions(now);
     if (gameState === "playing") {
       maintainPopulation(camX, camY);
     }
@@ -644,12 +698,21 @@ function animate(now) {
 }
 
 startBtn.addEventListener("click", async () => {
-  await input.requestGyroPermission();
+  try {
+    await input.requestGyroPermission();
+  } catch (err) {
+    console.warn("Could not enable motion controls:", err);
+  }
   resetGame();
   setState("playing");
 });
 
-restartBtn.addEventListener("click", () => {
+restartBtn.addEventListener("click", async () => {
+  try {
+    if (!input.gyroActive) await input.requestGyroPermission();
+  } catch (err) {
+    console.warn("Could not enable motion controls:", err);
+  }
   resetGame();
   setState("playing");
 });
@@ -657,6 +720,13 @@ restartBtn.addEventListener("click", () => {
 window.addEventListener("resize", () => {
   resize();
   initBubbles();
+});
+
+window.addEventListener("orientationchange", () => {
+  setTimeout(() => {
+    resize();
+    initBubbles();
+  }, 100);
 });
 
 resize();
