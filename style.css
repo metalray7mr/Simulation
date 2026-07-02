@@ -87,6 +87,41 @@ body {
   opacity: 0.55;
 }
 
+.name-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 1.25rem;
+  text-align: left;
+  font-size: 0.82rem;
+  opacity: 0.9;
+}
+
+.name-field input {
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 0.65rem;
+  padding: 0.6rem 0.75rem;
+  font-size: 1rem;
+  color: #e8f4ff;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+#minimap {
+  position: absolute;
+  right: max(0.75rem, env(safe-area-inset-right));
+  bottom: max(0.75rem, env(safe-area-inset-bottom));
+  width: 112px;
+  height: 112px;
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 5;
+  opacity: 0.92;
+}
+
+#minimap.hidden {
+  display: none;
+}
+
 #final-score {
   margin: 1rem 0 1.5rem;
   font-size: clamp(1.1rem, 4vw, 1.35rem);

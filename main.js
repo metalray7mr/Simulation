@@ -11,6 +11,24 @@ const sizeLabel = document.getElementById("size-label");
 const finalScoreLabel = document.getElementById("final-score");
 const controlHint = document.getElementById("control-hint");
 const app = document.getElementById("app");
+const minimapCanvas = document.getElementById("minimap");
+const minimapCtx = minimapCanvas.getContext("2d");
+const playersLabel = document.getElementById("players-label");
+const mpStatus = document.getElementById("mp-status");
+const playerNameInput = document.getElementById("player-name");
+
+function getWebSocketUrl() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("ws")) return params.get("ws");
+  const host = window.location.hostname;
+  if (host === "localhost" || host === "127.0.0.1") {
+    return "ws://localhost:3001";
+  }
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${host}:3001`;
+}
+
+const WS_URL = getWebSocketUrl();
 
 const WORLD_W = 3200;
 const WORLD_H = 2400;
@@ -38,6 +56,8 @@ let score = 0;
 let invincibleUntil = 0;
 let bubbles = [];
 let caustics = [];
+let remotePlayers = [];
+let lastNetSend = 0;
 
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
@@ -238,6 +258,14 @@ class Fish {
     this.heading = randomRange(0, Math.PI * 2);
     this.wanderAngle = randomRange(0, Math.PI * 2);
     this.wiggle = randomRange(0, Math.PI * 2);
+    this.isRemote = false;
+    this.remoteId = null;
+    this.name = "";
+    this.alive = true;
+    this.targetX = x;
+    this.targetY = y;
+    this.targetHeading = this.heading;
+    this.targetSize = size;
   }
 
   get radius() {
@@ -250,6 +278,14 @@ class Fish {
   }
 
   update(dt, input, player, allFish) {
+    if (this.isRemote) {
+      this.x = lerp(this.x, this.targetX, 0.22);
+      this.y = lerp(this.y, this.targetY, 0.22);
+      this.size = lerp(this.size, this.targetSize, 0.15);
+      this.heading = lerp(this.heading, this.targetHeading, 0.18);
+      this.wiggle += dt * 6;
+      return;
+    }
     if (this.isPlayer) {
       this.updatePlayer(dt, input);
     } else {
@@ -433,6 +469,11 @@ class Fish {
       ctx.beginPath();
       ctx.ellipse(0, 0, bodyLen * 0.58, bodyH * 1.05, 0, 0, Math.PI * 2);
       ctx.stroke();
+    } else if (this.isRemote && this.name) {
+      ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
+      ctx.font = `${Math.max(9, r * 0.45)}px system-ui, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.fillText(this.name, 0, -bodyH - 6);
     }
 
     ctx.restore();
@@ -510,6 +551,241 @@ const input = new InputManager();
 let player = null;
 let aiFish = [];
 
+class MultiplayerClient {
+  constructor() {
+    this.ws = null;
+    this.id = null;
+    this.connected = false;
+    this.playerCount = 1;
+    this.reconnectDelay = 1500;
+  }
+
+  connect() {
+    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+      return;
+    }
+
+    try {
+      this.ws = new WebSocket(WS_URL);
+    } catch (err) {
+      this.setStatus("Multiplayer offline (solo mode)");
+      return;
+    }
+
+    this.setStatus("Connecting to server...");
+
+    this.ws.addEventListener("open", () => {
+      this.connected = true;
+      this.setStatus("Multiplayer connected");
+    });
+
+    this.ws.addEventListener("message", (event) => {
+      let msg;
+      try {
+        msg = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      this.handleMessage(msg);
+    });
+
+    this.ws.addEventListener("close", () => {
+      this.connected = false;
+      this.id = null;
+      remotePlayers = [];
+      this.playerCount = 1;
+      updateHUD();
+      this.setStatus("Multiplayer offline (solo mode)");
+      setTimeout(() => this.connect(), this.reconnectDelay);
+    });
+
+    this.ws.addEventListener("error", () => {
+      this.setStatus("Multiplayer offline (solo mode)");
+    });
+  }
+
+  setStatus(text) {
+    if (mpStatus) mpStatus.textContent = text;
+  }
+
+  handleMessage(msg) {
+    if (msg.type === "welcome") {
+      this.id = msg.id;
+      this.syncPlayers(msg.players || []);
+      return;
+    }
+    if (msg.type === "players") {
+      this.syncPlayers(msg.players || []);
+      return;
+    }
+    if (msg.type === "playerEaten") {
+      if (msg.targetId === this.id && gameState === "playing") {
+        finalScoreLabel.textContent = `Score: ${score}`;
+        setState("gameover");
+      }
+      if (msg.eater && msg.eater.id === this.id && player) {
+        player.size = clamp(msg.eater.size, 1, MAX_PLAYER_SIZE);
+        score = msg.eater.score;
+        updateHUD();
+      }
+      if (msg.players) {
+        this.syncPlayers(msg.players);
+      } else {
+        remotePlayers = remotePlayers.filter((f) => f.remoteId !== msg.targetId);
+      }
+    }
+  }
+
+  syncPlayers(list) {
+    const alive = list.filter((p) => p.id !== this.id && p.alive);
+    this.playerCount = list.filter((p) => p.alive).length;
+
+    const existing = new Map(remotePlayers.map((f) => [f.remoteId, f]));
+    remotePlayers = alive.map((data) => {
+      let fish = existing.get(data.id);
+      if (!fish) {
+        fish = new Fish({
+          x: data.x,
+          y: data.y,
+          size: data.size,
+          color: data.color,
+          isPlayer: false,
+        });
+        fish.isRemote = true;
+        fish.remoteId = data.id;
+        fish.name = data.name || "";
+      }
+      fish.targetX = data.x;
+      fish.targetY = data.y;
+      fish.targetSize = data.size;
+      fish.targetHeading = data.heading || 0;
+      fish.color = data.color;
+      fish.name = data.name || fish.name;
+      fish.alive = true;
+      return fish;
+    });
+    updateHUD();
+  }
+
+  send(type, payload = {}) {
+    if (!this.connected || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    this.ws.send(JSON.stringify({ type, ...payload }));
+  }
+
+  sendPlayerUpdate(now) {
+    if (!player || gameState !== "playing" || now - lastNetSend < 80) return;
+    lastNetSend = now;
+    this.send("update", {
+      state: {
+        x: player.x,
+        y: player.y,
+        size: player.size,
+        heading: player.heading,
+        score,
+        name: getPlayerName(),
+      },
+    });
+  }
+
+  notifyDeath() {
+    this.send("died");
+  }
+
+  notifyRespawn() {
+    if (!player) return;
+    this.send("respawn", {
+      state: { x: player.x, y: player.y },
+    });
+    this.send("update", {
+      state: {
+        x: player.x,
+        y: player.y,
+        size: player.size,
+        heading: player.heading,
+        score,
+        name: getPlayerName(),
+      },
+    });
+  }
+
+  tryEatPlayer(targetId) {
+    this.send("eatPlayer", { targetId });
+  }
+}
+
+const multiplayer = new MultiplayerClient();
+
+function getPlayerName() {
+  const name = playerNameInput?.value?.trim();
+  return name || "Fish";
+}
+
+function drawMinimap(camX, camY) {
+  const size = 112;
+  const radius = 46;
+  const cx = size / 2;
+  const cy = size / 2;
+  const scale = (radius * 1.85) / Math.max(WORLD_W, WORLD_H);
+
+  minimapCtx.clearRect(0, 0, size, size);
+
+  minimapCtx.save();
+  minimapCtx.beginPath();
+  minimapCtx.arc(cx, cy, radius, 0, Math.PI * 2);
+  minimapCtx.clip();
+
+  const ocean = minimapCtx.createRadialGradient(cx, cy, 4, cx, cy, radius);
+  ocean.addColorStop(0, "#134e7a");
+  ocean.addColorStop(1, "#071521");
+  minimapCtx.fillStyle = ocean;
+  minimapCtx.fillRect(0, 0, size, size);
+
+  const worldLeft = cx - (WORLD_W / 2) * scale;
+  const worldTop = cy - (WORLD_H / 2) * scale;
+  minimapCtx.strokeStyle = "rgba(140, 200, 240, 0.35)";
+  minimapCtx.lineWidth = 1.5;
+  minimapCtx.strokeRect(worldLeft, worldTop, WORLD_W * scale, WORLD_H * scale);
+
+  const drawDot = (wx, wy, dotRadius, color, alpha = 1) => {
+    const mx = cx + (wx - WORLD_W / 2) * scale;
+    const my = cy + (wy - WORLD_H / 2) * scale;
+    minimapCtx.globalAlpha = alpha;
+    minimapCtx.fillStyle = color;
+    minimapCtx.beginPath();
+    minimapCtx.arc(mx, my, dotRadius, 0, Math.PI * 2);
+    minimapCtx.fill();
+    minimapCtx.globalAlpha = 1;
+  };
+
+  aiFish.forEach((fish) => {
+    drawDot(fish.x, fish.y, Math.max(1.2, fish.size * 1.1), fish.color, 0.55);
+  });
+
+  remotePlayers.forEach((fish) => {
+    drawDot(fish.x, fish.y, Math.max(2, fish.size * 1.6), fish.color, 0.95);
+  });
+
+  if (player) {
+    drawDot(player.x, player.y, Math.max(2.4, player.size * 1.8), "#5eead4", 1);
+  }
+
+  const viewW = width * scale;
+  const viewH = height * scale;
+  const viewX = cx + (camX - WORLD_W / 2) * scale - viewW / 2;
+  const viewY = cy + (camY - WORLD_H / 2) * scale - viewH / 2;
+  minimapCtx.strokeStyle = "rgba(255, 255, 255, 0.7)";
+  minimapCtx.lineWidth = 1.25;
+  minimapCtx.strokeRect(viewX, viewY, viewW, viewH);
+
+  minimapCtx.restore();
+
+  minimapCtx.strokeStyle = "rgba(180, 230, 255, 0.85)";
+  minimapCtx.lineWidth = 2;
+  minimapCtx.beginPath();
+  minimapCtx.arc(cx, cy, radius, 0, Math.PI * 2);
+  minimapCtx.stroke();
+}
+
 function initBubbles() {
   bubbles = [];
   const count = width < 768 ? 28 : 44;
@@ -556,6 +832,7 @@ function resetGame() {
 function updateHUD() {
   scoreLabel.textContent = `Score: ${score}`;
   sizeLabel.textContent = `Size: ${player.size.toFixed(1)}`;
+  playersLabel.textContent = `Players: ${multiplayer.playerCount}`;
 }
 
 function showOverlay(overlay) {
@@ -568,9 +845,17 @@ function showOverlay(overlay) {
 
 function setState(state) {
   gameState = state;
-  if (state === "start") showOverlay(startScreen);
-  else if (state === "playing") showOverlay(hud);
-  else if (state === "gameover") showOverlay(gameoverScreen);
+  if (state === "start") {
+    showOverlay(startScreen);
+    minimapCanvas.classList.add("hidden");
+  } else if (state === "playing") {
+    showOverlay(hud);
+    minimapCanvas.classList.remove("hidden");
+  } else if (state === "gameover") {
+    showOverlay(gameoverScreen);
+    minimapCanvas.classList.add("hidden");
+    multiplayer.notifyDeath();
+  }
 }
 
 function maintainPopulation(camX, camY) {
@@ -601,6 +886,23 @@ function handleCollisions(now) {
       aiFish.push(createAIFish(player.x, player.y, randomRange(0.5, Math.min(player.size * 0.85, 2.5))));
       updateHUD();
     } else if (!invincible && fish.canEat(player)) {
+      finalScoreLabel.textContent = `Score: ${score}`;
+      setState("gameover");
+      return;
+    }
+  }
+
+  for (const remote of remotePlayers) {
+    if (!remote.alive) continue;
+    if (!player.overlaps(remote)) continue;
+
+    if (player.canEat(remote)) {
+      multiplayer.tryEatPlayer(remote.remoteId);
+      score += 2;
+      player.size = clamp(player.size + remote.size * 0.12, 1, MAX_PLAYER_SIZE);
+      remote.alive = false;
+      updateHUD();
+    } else if (!invincible && remote.canEat(player)) {
       finalScoreLabel.textContent = `Score: ${score}`;
       setState("gameover");
       return;
@@ -683,7 +985,13 @@ function animate(now) {
 
     const sorted = [...aiFish].sort((a, b) => a.size - b.size);
     sorted.forEach((f) => f.draw(ctx, camX, camY));
+    remotePlayers.forEach((f) => {
+      f.update(dt, input, player, aiFish);
+      f.draw(ctx, camX, camY);
+    });
     player.draw(ctx, camX, camY);
+    drawMinimap(camX, camY);
+    multiplayer.sendPlayerUpdate(now);
   } else {
     drawBackground(time, WORLD_W / 2, WORLD_H / 2);
     if (player) {
@@ -704,6 +1012,7 @@ startBtn.addEventListener("click", async () => {
     console.warn("Could not enable motion controls:", err);
   }
   resetGame();
+  multiplayer.notifyRespawn();
   setState("playing");
 });
 
@@ -714,6 +1023,7 @@ restartBtn.addEventListener("click", async () => {
     console.warn("Could not enable motion controls:", err);
   }
   resetGame();
+  multiplayer.notifyRespawn();
   setState("playing");
 });
 
@@ -734,4 +1044,6 @@ initBubbles();
 initCaustics();
 resetGame();
 setState("start");
+minimapCanvas.classList.add("hidden");
+multiplayer.connect();
 requestAnimationFrame(animate);

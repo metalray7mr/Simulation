@@ -16,15 +16,23 @@
         <div class="panel">
           <h1>Ocean Feast</h1>
           <p class="subtitle">Tilt your phone to swim. Eat smaller fish. Avoid the big ones.</p>
+          <label class="name-field">
+            <span>Your name</span>
+            <input id="player-name" type="text" maxlength="16" placeholder="Fish" autocomplete="nickname" />
+          </label>
           <button id="start-btn" type="button">Start</button>
-          <p class="hint">Tap anywhere to swim. Desktop: arrow keys / WASD also work.</p>
+          <p class="hint">Tap anywhere to swim. Multiplayer works when the game server is running.</p>
+          <p id="mp-status" class="hint">Connecting to server...</p>
         </div>
       </div>
+
+      <canvas id="minimap" width="112" height="112" aria-hidden="true"></canvas>
 
       <div id="hud" class="overlay hidden" aria-hidden="true">
         <div class="hud-bar">
           <span id="score-label">Score: 0</span>
           <span id="size-label">Size: 1.0</span>
+          <span id="players-label">Players: 1</span>
         </div>
         <p id="control-hint" class="control-hint">Tilt phone or tap to swim</p>
       </div>
@@ -37,6 +45,6 @@
         </div>
       </div>
     </div>
-    <script src="main.js?v=2"></script>
+    <script src="main.js?v=3"></script>
   </body>
 </html>
