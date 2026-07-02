@@ -97,10 +97,6 @@ body {
   box-shadow: 0 0 8px rgba(77, 163, 255, 0.7);
 }
 
-.chip-neutral::before {
-  background: #9aa3ad;
-}
-
 @media (max-width: 480px) {
   .hud,
   .legend {
