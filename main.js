@@ -95,10 +95,10 @@ let lastWarnCheck = 0;
 let lastHudUpdate = 0;
 let lastChartUpdate = 0;
 let collisionWarn = false;
-let isPaused = false;
 let chartPanelOpen = false;
 let prevShipX = 0;
 let prevShipY = 0;
+let gamepadEnabled = false;
 
 const keys = {};
 const helm = { throttle: 0, rudder: 0, bow: 0 };
@@ -380,15 +380,19 @@ function getEffectiveHelm() {
     bow = touchBow;
   }
 
-  const pads = navigator.getGamepads ? navigator.getGamepads() : [];
-  for (const pad of pads) {
-    if (!pad) continue;
-    const stickX = pad.axes[0] || 0;
-    const rt = pad.buttons[7]?.value ?? 0;
-    const lt = pad.buttons[6]?.value ?? 0;
-    if (Math.abs(stickX) > 0.15) rudder = stickX * MAX_RUDDER;
-    if (rt > 0.1 || lt > 0.1) throttle = rt - lt;
-    break;
+  const pads = gamepadEnabled && navigator.getGamepads ? navigator.getGamepads() : [];
+  try {
+    for (const pad of pads) {
+      if (!pad) continue;
+      const stickX = pad.axes[0] || 0;
+      const rt = pad.buttons[7]?.value ?? 0;
+      const lt = pad.buttons[6]?.value ?? 0;
+      if (Math.abs(stickX) > 0.15) rudder = stickX * MAX_RUDDER;
+      if (rt > 0.1 || lt > 0.1) throttle = rt - lt;
+      break;
+    }
+  } catch (_) {
+    gamepadEnabled = false;
   }
 
   return { throttle, rudder, bow };
@@ -423,15 +427,15 @@ function applyPhysics(s, input, dt) {
   const bfx = -sin * bowForce;
   const bfy = cos * bowForce;
 
-  const windBase = 12000;
-  const gust = Math.sin(wavePhase * 0.7) * 4000;
+  const windBase = 1200;
+  const gust = Math.sin(wavePhase * 0.7) * 400;
   const windX = windBase + gust;
-  const windY = 6000 + Math.cos(wavePhase * 0.5) * 2500;
-  const currentX = 8000;
-  const currentY = 3000;
+  const windY = 600 + Math.cos(wavePhase * 0.5) * 250;
+  const currentX = 800;
+  const currentY = 300;
 
-  const waveDriftX = Math.sin(wavePhase * 1.3 + s.x * 0.002) * 800;
-  const waveDriftY = Math.cos(wavePhase * 1.1 + s.y * 0.002) * 800;
+  const waveDriftX = Math.sin(wavePhase * 1.3 + s.x * 0.002) * 80;
+  const waveDriftY = Math.cos(wavePhase * 1.1 + s.y * 0.002) * 80;
 
   const dragFx = -fwdSpeed * Math.abs(fwdSpeed) * DRAG_FWD - latSpeed * DRAG_LAT * cos;
   const dragFy = -fwdSpeed * Math.abs(fwdSpeed) * DRAG_FWD * sin - latSpeed * DRAG_LAT * sin;
@@ -1004,23 +1008,27 @@ function update(dt) {
 
 function render() {
   ctx.clearRect(0, 0, width, height);
-  if (gameState === "playing" || gameState === "success" || gameState === "ground" || gameState === "collision") {
+  if (gameState !== "start") {
     drawWorld();
     drawMinimap();
   }
 }
 
 function loop(now) {
-  if (isPaused) {
-    requestAnimationFrame(loop);
-    return;
+  try {
+    const dt = Math.min(Math.max((now - lastTime) / 1000, 0), MAX_DT);
+    lastTime = now;
+    update(dt);
+    render();
+  } catch (err) {
+    console.error("Game loop error:", err);
+    resetClock();
   }
-  if (!lastTime) lastTime = now;
-  const dt = Math.min((now - lastTime) / 1000, MAX_DT);
-  lastTime = now;
-  update(dt);
-  render();
   requestAnimationFrame(loop);
+}
+
+function resetClock() {
+  lastTime = performance.now();
 }
 
 function startGame() {
@@ -1035,6 +1043,7 @@ function startGame() {
   updateHUD();
   updateCharts();
   if (width < 768) touchControls.classList.remove("hidden");
+  resetClock();
 }
 
 function setupInput() {
@@ -1057,19 +1066,28 @@ function setupInput() {
   restartBtn.addEventListener("click", startGame);
   successRestartBtn.addEventListener("click", startGame);
 
-  chartToggle.addEventListener("click", () => {
+  chartToggle.addEventListener("click", (e) => {
+    e.stopPropagation();
     chartPanelOpen = !chartPanelOpen;
     updateChartVisibility();
   });
-  chartClose.addEventListener("click", () => {
+  chartClose.addEventListener("click", (e) => {
+    e.stopPropagation();
     chartPanelOpen = false;
     updateChartVisibility();
   });
 
+  function enableGamepad() {
+    gamepadEnabled = true;
+  }
+  window.addEventListener("pointerdown", enableGamepad, { passive: true });
+  window.addEventListener("keydown", enableGamepad);
+
   document.addEventListener("visibilitychange", () => {
-    isPaused = document.hidden;
-    if (!isPaused) lastTime = performance.now();
+    if (!document.hidden) resetClock();
   });
+  window.addEventListener("focus", resetClock);
+  window.addEventListener("blur", resetClock);
 
   document.querySelectorAll(".touch-btn").forEach((btn) => {
     const action = btn.dataset.action;
@@ -1095,7 +1113,11 @@ function setupInput() {
   rudderWheel.addEventListener("pointermove", (e) => {
     if (rudderDrag) updateRudderTouch(e);
   });
-  rudderWheel.addEventListener("pointerup", () => {
+  rudderWheel.addEventListener("pointerup", (e) => {
+    rudderDrag = false;
+    if (rudderWheel.hasPointerCapture(e.pointerId)) rudderWheel.releasePointerCapture(e.pointerId);
+  });
+  rudderWheel.addEventListener("pointercancel", () => {
     rudderDrag = false;
   });
 
@@ -1118,7 +1140,11 @@ function setupInput() {
   throttleSlider.addEventListener("pointermove", (e) => {
     if (throttleDrag) updateThrottleTouch(e);
   });
-  throttleSlider.addEventListener("pointerup", () => {
+  throttleSlider.addEventListener("pointerup", (e) => {
+    throttleDrag = false;
+    if (throttleSlider.hasPointerCapture(e.pointerId)) throttleSlider.releasePointerCapture(e.pointerId);
+  });
+  throttleSlider.addEventListener("pointercancel", () => {
     throttleDrag = false;
   });
 

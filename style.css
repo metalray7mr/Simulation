@@ -143,6 +143,10 @@ button:active {
     max(0.75rem, env(safe-area-inset-bottom)) max(0.75rem, env(safe-area-inset-left));
 }
 
+#hud * {
+  pointer-events: none;
+}
+
 .hud-top {
   display: flex;
   flex-wrap: wrap;
