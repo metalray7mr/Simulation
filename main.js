@@ -1,11 +1,137 @@
-const canvas = document.getElementById("scene");
+const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
+const minimapCanvas = document.getElementById("minimap");
+const minimapCtx = minimapCanvas.getContext("2d");
+
+const startScreen = document.getElementById("start-screen");
+const hud = document.getElementById("hud");
+const successScreen = document.getElementById("success-screen");
+const gameoverScreen = document.getElementById("gameover-screen");
+const touchControls = document.getElementById("touch-controls");
+const startBtn = document.getElementById("start-btn");
+const restartBtn = document.getElementById("restart-btn");
+const successRestartBtn = document.getElementById("success-restart-btn");
+const speedLabel = document.getElementById("speed-label");
+const headingLabel = document.getElementById("heading-label");
+const rudderLabel = document.getElementById("rudder-label");
+const throttleLabel = document.getElementById("throttle-label");
+const missionLabel = document.getElementById("mission-label");
+const scoreLabel = document.getElementById("score-label");
+const warningLabel = document.getElementById("warning-label");
+const successScore = document.getElementById("success-score");
+const successTime = document.getElementById("success-time");
+const gameoverTitle = document.getElementById("gameover-title");
+const gameoverReason = document.getElementById("gameover-reason");
+const rudderWheel = document.getElementById("rudder-wheel");
+const rudderKnob = document.getElementById("rudder-knob");
+const throttleSlider = document.getElementById("throttle-slider");
+const throttleFill = document.getElementById("throttle-fill");
+const throttleThumb = document.getElementById("throttle-thumb");
+
+const WORLD_W = 4000;
+const WORLD_H = 3000;
+const MPS_TO_KNOTS = 1.94384;
+const DEG = Math.PI / 180;
+const MAX_DT = 1 / 30;
+
+const SHIP_LENGTH = 130;
+const SHIP_WIDTH = 30;
+const SHIP_MASS = 85000;
+const MAX_THRUST = 420000;
+const MAX_RUDDER = 35 * DEG;
+const RUDDER_RATE = 0.45 * DEG;
+const THROTTLE_RATE = 0.35;
+const BOW_THRUST = 180000;
+const BOW_TORQUE = 80000;
+const DRAG_FWD = 0.018;
+const DRAG_LAT = 0.12;
+const DRAG_ANG = 0.85;
+const RUDDER_COEFF = 2.8e6;
+const DOCK_SPEED_KN = 3;
+const DOCK_ALIGN_DEG = 18;
 
 let width = 0;
 let height = 0;
 let dpr = 1;
-const bubbles = [];
-const caustics = [];
+let lastTime = 0;
+let gameState = "start";
+let missionTime = 0;
+let score = 1000;
+let collisionPenalty = 0;
+let wavePhase = 0;
+let wakeParticles = [];
+let camera = { x: 0, y: 0, rot: 0 };
+
+const keys = {};
+const helm = { throttle: 0, rudder: 0, bow: 0 };
+let touchRudder = 0;
+let touchThrottle = 0;
+let touchBow = 0;
+
+const waypoints = [
+  { x: 520, y: 2100, label: "Depart pier" },
+  { x: 900, y: 1750, label: "Enter channel" },
+  { x: 1800, y: 1400, label: "Mid channel" },
+  { x: 2800, y: 1050, label: "Approach dock" },
+  { x: 3400, y: 820, label: "Dock at pier" },
+];
+
+const dockZone = { x: 3280, y: 720, w: 280, h: 200, heading: -25 * DEG };
+
+const landPolygons = [
+  // North mainland
+  [
+    { x: 0, y: 0 },
+    { x: WORLD_W, y: 0 },
+    { x: WORLD_W, y: 480 },
+    { x: 2600, y: 520 },
+    { x: 2200, y: 680 },
+    { x: 1600, y: 720 },
+    { x: 1100, y: 900 },
+    { x: 600, y: 1100 },
+    { x: 200, y: 1400 },
+    { x: 0, y: 1800 },
+  ],
+  // South breakwater
+  [
+    { x: 0, y: WORLD_H },
+    { x: WORLD_W, y: WORLD_H },
+    { x: WORLD_W, y: 2200 },
+    { x: 3000, y: 2150 },
+    { x: 2400, y: 2000 },
+    { x: 1800, y: 1900 },
+    { x: 1200, y: 2050 },
+    { x: 700, y: 2300 },
+    { x: 0, y: 2500 },
+  ],
+  // East pier structure
+  [
+    { x: 3550, y: 600 },
+    { x: WORLD_W, y: 580 },
+    { x: WORLD_W, y: 950 },
+    { x: 3520, y: 920 },
+  ],
+  // West dock wall
+  [
+    { x: 0, y: 1950 },
+    { x: 350, y: 1920 },
+    { x: 420, y: 2280 },
+    { x: 0, y: 2320 },
+  ],
+];
+
+const buoys = [
+  { x: 700, y: 1880, color: "#ff4444" },
+  { x: 1100, y: 1620, color: "#44ff66" },
+  { x: 1500, y: 1380, color: "#ff4444" },
+  { x: 2100, y: 1180, color: "#44ff66" },
+  { x: 2600, y: 980, color: "#ff4444" },
+  { x: 3100, y: 860, color: "#44ff66" },
+];
+
+let ship = null;
+let aiShips = [];
+let currentWaypoint = 0;
 
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
@@ -15,23 +141,140 @@ function lerp(a, b, t) {
   return a + (b - a) * t;
 }
 
-function randomRange(min, max) {
-  return min + Math.random() * (max - min);
+function dist(ax, ay, bx, by) {
+  const dx = bx - ax;
+  const dy = by - ay;
+  return Math.sqrt(dx * dx + dy * dy);
 }
 
-function hexToRgb(hex) {
-  const n = parseInt(hex.slice(1), 16);
-  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+function normalizeAngle(a) {
+  while (a > Math.PI) a -= Math.PI * 2;
+  while (a < -Math.PI) a += Math.PI * 2;
+  return a;
 }
 
-function shade(hex, amount) {
-  const { r, g, b } = hexToRgb(hex);
-  const mix = amount >= 0 ? 255 : 0;
-  const t = Math.abs(amount);
-  const nr = Math.round(lerp(r, mix, t));
-  const ng = Math.round(lerp(g, mix, t));
-  const nb = Math.round(lerp(b, mix, t));
-  return `rgb(${nr}, ${ng}, ${nb})`;
+function headingDeg(h) {
+  const d = ((90 - (h * 180) / Math.PI) % 360 + 360) % 360;
+  return Math.round(d);
+}
+
+function pointInPoly(px, py, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i].x;
+    const yi = poly[i].y;
+    const xj = poly[j].x;
+    const yj = poly[j].y;
+    if (yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function shipCorners(s) {
+  const cos = Math.cos(s.heading);
+  const sin = Math.sin(s.heading);
+  const hl = SHIP_LENGTH * 0.5;
+  const hw = SHIP_WIDTH * 0.5;
+  const local = [
+    { lx: hl, ly: -hw },
+    { lx: hl, ly: hw },
+    { lx: -hl, ly: hw },
+    { lx: -hl, ly: -hw },
+  ];
+  return local.map((p) => ({
+    x: s.x + p.lx * cos - p.ly * sin,
+    y: s.y + p.lx * sin + p.ly * cos,
+  }));
+}
+
+function polyCollision(corners, poly) {
+  for (const c of corners) {
+    if (pointInPoly(c.x, c.y, poly)) return true;
+  }
+  const cx = corners.reduce((s, p) => s + p.x, 0) / corners.length;
+  const cy = corners.reduce((s, p) => s + p.y, 0) / corners.length;
+  if (pointInPoly(cx, cy, poly)) return true;
+  return false;
+}
+
+function shipsCollide(a, b) {
+  const ca = shipCorners(a);
+  const cb = shipCorners(b);
+  const midAx = ca.reduce((s, p) => s + p.x, 0) / 4;
+  const midAy = ca.reduce((s, p) => s + p.y, 0) / 4;
+  const midBx = cb.reduce((s, p) => s + p.x, 0) / 4;
+  const midBy = cb.reduce((s, p) => s + p.y, 0) / 4;
+  return dist(midAx, midAy, midBx, midBy) < (SHIP_LENGTH + SHIP_LENGTH) * 0.45;
+}
+
+function createShip(x, y, heading) {
+  return {
+    x,
+    y,
+    vx: 0,
+    vy: 0,
+    heading,
+    omega: 0,
+    throttle: 0,
+    rudder: 0,
+    bow: 0,
+    isAI: false,
+    pathIndex: 0,
+    path: [],
+    color: "#e8ecef",
+  };
+}
+
+function createAIShips() {
+  return [
+    {
+      ...createShip(2000, 1250, -0.4),
+      isAI: true,
+      color: "#c8a86e",
+      path: [
+        { x: 2000, y: 1250 },
+        { x: 2400, y: 1100 },
+        { x: 2900, y: 950 },
+        { x: 3200, y: 880 },
+      ],
+      pathIndex: 0,
+      throttle: 0.35,
+    },
+    {
+      ...createShip(1400, 1550, 0.6),
+      isAI: true,
+      color: "#8eb4c8",
+      path: [
+        { x: 1400, y: 1550 },
+        { x: 1000, y: 1700 },
+        { x: 650, y: 1950 },
+      ],
+      pathIndex: 0,
+      throttle: 0.28,
+    },
+  ];
+}
+
+function resetGame() {
+  ship = createShip(480, 2180, -Math.PI / 2);
+  ship.throttle = 0;
+  aiShips = createAIShips();
+  currentWaypoint = 0;
+  missionTime = 0;
+  score = 1000;
+  collisionPenalty = 0;
+  wakeParticles = [];
+  helm.throttle = 0;
+  helm.rudder = 0;
+  helm.bow = 0;
+  touchRudder = 0;
+  touchThrottle = 0;
+  touchBow = 0;
+  camera.x = ship.x;
+  camera.y = ship.y;
+  camera.rot = ship.heading;
 }
 
 function resize() {
@@ -43,1299 +286,610 @@ function resize() {
   canvas.style.width = `${width}px`;
   canvas.style.height = `${height}px`;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const isMobile = width < 768;
+  touchControls.classList.toggle("hidden", gameState !== "playing" || !isMobile);
 }
 
-function rgba(hex, alpha) {
-  const { r, g, b } = hexToRgb(hex);
-  return `rgba(${r},${g},${b},${alpha})`;
+function getEffectiveHelm() {
+  let throttle = helm.throttle;
+  let rudder = helm.rudder;
+  let bow = helm.bow;
+
+  if (width < 768 && gameState === "playing") {
+    throttle = touchThrottle;
+    rudder = touchRudder;
+    bow = touchBow;
+  }
+
+  const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+  for (const pad of pads) {
+    if (!pad) continue;
+    const stickX = pad.axes[0] || 0;
+    const rt = pad.buttons[7]?.value ?? 0;
+    const lt = pad.buttons[6]?.value ?? 0;
+    if (Math.abs(stickX) > 0.15) rudder = stickX * MAX_RUDDER;
+    if (rt > 0.1 || lt > 0.1) throttle = rt - lt;
+    break;
+  }
+
+  return { throttle, rudder, bow };
 }
 
-function spineAngleAt(spine, i) {
-  const p = spine[i];
-  if (i === 0) return Math.atan2(spine[1].y - p.y, spine[1].x - p.x);
-  if (i === spine.length - 1) {
-    return Math.atan2(p.y - spine[i - 1].y, p.x - spine[i - 1].x);
-  }
-  return Math.atan2(spine[i + 1].y - spine[i - 1].y, spine[i + 1].x - spine[i - 1].x);
+function updateHelmFromKeyboard(dt) {
+  if (keys["w"] || keys["arrowup"]) helm.throttle = clamp(helm.throttle + THROTTLE_RATE * dt, -1, 1);
+  if (keys["s"] || keys["arrowdown"]) helm.throttle = clamp(helm.throttle - THROTTLE_RATE * dt, -1, 1);
+  if (keys["a"] || keys["arrowleft"]) helm.rudder = clamp(helm.rudder - RUDDER_RATE * dt * 60, -MAX_RUDDER, MAX_RUDDER);
+  if (keys["d"] || keys["arrowright"]) helm.rudder = clamp(helm.rudder + RUDDER_RATE * dt * 60, -MAX_RUDDER, MAX_RUDDER);
+  if (keys["q"]) helm.bow = -1;
+  else if (keys["e"]) helm.bow = 1;
+  else if (!touchBow) helm.bow = 0;
+  if (keys[" "]) helm.rudder = lerp(helm.rudder, 0, clamp(dt * 8, 0, 1));
 }
 
-function bodyHalfWidth(t, halfWidth) {
-  const snout = t < 0.1 ? 0.32 + (t / 0.1) * 0.68 : 1;
-  const belly = t < 0.52 ? 1 : 1 - ((t - 0.52) / 0.22) * 0.42;
-  const peduncle = t > 0.78 ? 1 - ((t - 0.78) / 0.22) * 0.62 : 1;
-  return halfWidth * snout * belly * peduncle;
+function applyPhysics(s, input, dt) {
+  s.throttle = input.throttle;
+  s.rudder = input.rudder;
+  s.bow = input.bow;
+
+  const cos = Math.cos(s.heading);
+  const sin = Math.sin(s.heading);
+  const fwdSpeed = s.vx * cos + s.vy * sin;
+  const latSpeed = -s.vx * sin + s.vy * cos;
+
+  const thrust = s.throttle * MAX_THRUST;
+  const fx = cos * thrust;
+  const fy = sin * thrust;
+
+  const bowForce = s.bow * BOW_THRUST;
+  const bfx = -sin * bowForce;
+  const bfy = cos * bowForce;
+
+  const windBase = 12000;
+  const gust = Math.sin(wavePhase * 0.7) * 4000;
+  const windX = windBase + gust;
+  const windY = 6000 + Math.cos(wavePhase * 0.5) * 2500;
+  const currentX = 8000;
+  const currentY = 3000;
+
+  const waveDriftX = Math.sin(wavePhase * 1.3 + s.x * 0.002) * 800;
+  const waveDriftY = Math.cos(wavePhase * 1.1 + s.y * 0.002) * 800;
+
+  const dragFx = -fwdSpeed * Math.abs(fwdSpeed) * DRAG_FWD - latSpeed * DRAG_LAT * cos;
+  const dragFy = -fwdSpeed * Math.abs(fwdSpeed) * DRAG_FWD * sin - latSpeed * DRAG_LAT * sin;
+
+  const totalFx = fx + bfx + windX + currentX + waveDriftX + dragFx * (s.isAI ? 0.6 : 1);
+  const totalFy = fy + bfy + windY + currentY + waveDriftY + dragFy * (s.isAI ? 0.6 : 1);
+
+  const ax = totalFx / SHIP_MASS;
+  const ay = totalFy / SHIP_MASS;
+
+  s.vx += ax * dt;
+  s.vy += ay * dt;
+
+  const rudderTorque = s.rudder * fwdSpeed * fwdSpeed * RUDDER_COEFF;
+  const bowTorque = s.bow * BOW_TORQUE;
+  const angDrag = -s.omega * Math.abs(s.omega) * DRAG_ANG - s.omega * 0.5;
+  s.omega += ((rudderTorque + bowTorque) / SHIP_MASS + angDrag) * dt;
+
+  s.x += s.vx * dt;
+  s.y += s.vy * dt;
+  s.heading += s.omega * dt;
+  s.heading = normalizeAngle(s.heading);
+
+  s.x = clamp(s.x, SHIP_LENGTH, WORLD_W - SHIP_LENGTH);
+  s.y = clamp(s.y, SHIP_LENGTH, WORLD_H - SHIP_LENGTH);
 }
 
-function getBounds() {
-  return { x: width * 0.42, y: height * 0.38 };
+function updateAI(s, dt) {
+  if (!s.path.length) return;
+  const target = s.path[s.pathIndex];
+  const dx = target.x - s.x;
+  const dy = target.y - s.y;
+  const desired = Math.atan2(dy, dx);
+  let diff = normalizeAngle(desired - s.heading);
+  s.rudder = clamp(diff * 1.2, -MAX_RUDDER * 0.7, MAX_RUDDER * 0.7);
+  const d = Math.sqrt(dx * dx + dy * dy);
+  if (d < 80 && s.pathIndex < s.path.length - 1) s.pathIndex++;
+  s.throttle = s.throttle || 0.3;
+  applyPhysics(s, { throttle: s.throttle, rudder: s.rudder, bow: 0 }, dt);
 }
 
-class Fish {
-  constructor({ color, label, x, y }) {
-    this.color = color;
-    this.dark = shade(color, -0.35);
-    this.light = shade(color, 0.28);
-    this.belly = shade(color, 0.45);
-    this.label = label;
-
-    this.segmentCount = 24;
-    this.segmentSpacing = width < 768 ? 5.8 : 6.8;
-    this.spine = [];
-    for (let i = 0; i < this.segmentCount; i += 1) {
-      this.spine.push({ x, y });
-    }
-
-    this.vx = randomRange(-30, 30);
-    this.vy = randomRange(-15, 15);
-    this.ax = 0;
-    this.ay = 0;
-
-    this.maxSpeed = randomRange(88, 115);
-    this.cruiseSpeed = randomRange(38, 52);
-    this.maxForce = randomRange(140, 190);
-    this.maxTurnRate = randomRange(2.8, 3.8);
-
-    this.heading = Math.atan2(this.vy, this.vx);
-    this.targetX = x;
-    this.targetY = y;
-    this.pickNewTarget();
-
-    this.tailPhase = Math.random() * Math.PI * 2;
-    this.finPhase = Math.random() * Math.PI * 2;
-    this.gillPhase = Math.random() * Math.PI * 2;
-    this.restTimer = randomRange(0, 2);
-    this.burstTimer = randomRange(4, 9);
-    this.dartTimer = 0;
-    this.state = "cruise";
-    this.size = width < 768 ? 1.75 : 2.2;
-    this.thrustPhase = 0;
-
-    this.personality = {
-      curiosity: randomRange(0.35, 0.9),
-      shyness: randomRange(0.25, 0.75),
-      boldness: randomRange(0.2, 0.6),
-    };
-  }
-
-  get head() {
-    return this.spine[0];
-  }
-
-  pickNewTarget() {
-    const b = getBounds();
-    this.targetX = randomRange(-b.x * 0.85, b.x * 0.85);
-    this.targetY = randomRange(-b.y * 0.85, b.y * 0.85);
-    this.restTimer = 0;
-    this.state = "cruise";
-  }
-
-  startle(fromX, fromY) {
-    if (this.dartTimer > 0) return;
-    this.state = "dart";
-    this.dartTimer = randomRange(0.35, 0.7);
-    const dx = this.head.x - fromX;
-    const dy = this.head.y - fromY;
-    const dist = Math.hypot(dx, dy) || 1;
-    this.vx = (dx / dist) * this.maxSpeed * 1.35;
-    this.vy = (dy / dist) * this.maxSpeed * 1.35;
-    this.targetX = this.head.x + (dx / dist) * 180;
-    this.targetY = this.head.y + (dy / dist) * 180;
-  }
-
-  seek(tx, ty, weight = 1) {
-    let dx = tx - this.head.x;
-    let dy = ty - this.head.y;
-    const dist = Math.hypot(dx, dy);
-    if (dist < 0.001) return { x: 0, y: 0 };
-
-    dx /= dist;
-    dy /= dist;
-
-    let desired = this.state === "dart" ? this.maxSpeed * 1.2 : this.maxSpeed;
-    if (this.state === "hover") desired = 8;
-    else if (dist < 130) desired = (dist / 130) * this.maxSpeed;
-
-    const sx = dx * desired - this.vx;
-    const sy = dy * desired - this.vy;
-    const mag = Math.hypot(sx, sy);
-    const limit = this.maxForce * weight;
-    if (mag > limit) return { x: (sx / mag) * limit, y: (sy / mag) * limit };
-    return { x: sx, y: sy };
-  }
-
-  wander(dt) {
-    this.wanderAngle = (this.wanderAngle || Math.random() * Math.PI * 2) + randomRange(-0.7, 0.7) * dt;
-    const speed = Math.hypot(this.vx, this.vy) || 1;
-    const wx = this.head.x + (this.vx / speed) * 70 + Math.cos(this.wanderAngle) * 55;
-    const wy = this.head.y + (this.vy / speed) * 70 + Math.sin(this.wanderAngle) * 55;
-    return this.seek(wx, wy, 0.28);
-  }
-
-  avoidWalls() {
-    const b = getBounds();
-    const margin = 80;
-    const strength = 220;
-    let fx = 0;
-    let fy = 0;
-    if (this.head.x < -b.x + margin) fx += strength;
-    if (this.head.x > b.x - margin) fx -= strength;
-    if (this.head.y < -b.y + margin) fy += strength;
-    if (this.head.y > b.y - margin) fy -= strength;
-    return { x: fx, y: fy };
-  }
-
-  interact(other, dt) {
-    const dx = this.head.x - other.head.x;
-    const dy = this.head.y - other.head.y;
-    const dist = Math.hypot(dx, dy);
-    if (dist < 0.001) return { x: 0, y: 0 };
-
-    const nx = dx / dist;
-    const ny = dy / dist;
-    let fx = 0;
-    let fy = 0;
-
-    const relVx = other.vx - this.vx;
-    const relVy = other.vy - this.vy;
-    const approach = -(relVx * nx + relVy * ny);
-
-    if (dist < 48 && approach > 40) {
-      this.startle(other.head.x, other.head.y);
-    }
-
-    if (dist < 62) {
-      const push = ((62 - dist) / 62) * 5.5 * this.personality.shyness;
-      fx += nx * push;
-      fy += ny * push;
-    } else if (dist > 160 && dist < 260 && this.state === "cruise") {
-      const align = 0.12 * this.personality.curiosity;
-      fx += other.vx * align;
-      fy += other.vy * align;
-      fx += (other.head.x - this.head.x) * 0.004 * this.personality.curiosity;
-      fy += (other.head.y - this.head.y) * 0.004 * this.personality.curiosity;
-    }
-
-    return { x: fx, y: fy };
-  }
-
-  updateSpine(dt) {
-    const speed = Math.hypot(this.vx, this.vy);
-    const waveAmp = this.state === "hover" ? 0.05 : 0.11 + speed * 0.0022;
-    const waveFreq = this.state === "hover" ? 1.8 : 3.8 + speed * 0.045;
-    this.tailPhase += dt * waveFreq;
-    this.thrustPhase = Math.sin(this.tailPhase);
-
-    this.head.x += this.vx * dt;
-    this.head.y += this.vy * dt;
-
-    if (speed > 2 && this.state !== "hover") {
-      const thrust = this.thrustPhase * speed * 0.0025;
-      this.vx += Math.cos(this.heading) * thrust;
-      this.vy += Math.sin(this.heading) * thrust;
-    }
-
-    for (let i = 1; i < this.spine.length; i += 1) {
-      const prev = this.spine[i - 1];
-      const seg = this.spine[i];
-      const dx = prev.x - seg.x;
-      const dy = prev.y - seg.y;
-      const dist = Math.hypot(dx, dy) || 0.001;
-      const t = clamp(dist / this.segmentSpacing, 0, 1);
-      const follow = 0.28 + (i / this.spine.length) * 0.22;
-
-      let tx = prev.x - (dx / dist) * this.segmentSpacing;
-      let ty = prev.y - (dy / dist) * this.segmentSpacing;
-
-      const progress = i / (this.spine.length - 1);
-      const amp = Math.pow(progress, 2.4) * waveAmp * this.segmentSpacing * 2.8;
-      const wave = Math.sin(this.tailPhase - i * 0.72) * amp;
-      const angle = Math.atan2(dy, dx);
-      tx += Math.cos(angle + Math.PI / 2) * wave;
-      ty += Math.sin(angle + Math.PI / 2) * wave;
-
-      seg.x = lerp(seg.x, tx, follow + (1 - t) * 0.15);
-      seg.y = lerp(seg.y, ty, follow + (1 - t) * 0.15);
+function checkCollisions() {
+  const corners = shipCorners(ship);
+  for (const poly of landPolygons) {
+    if (polyCollision(corners, poly)) {
+      return { type: "ground", message: "Your vessel struck land." };
     }
   }
-
-  update(dt, other, time) {
-    const b = getBounds();
-    const toTarget = Math.hypot(this.targetX - this.head.x, this.targetY - this.head.y);
-
-    this.dartTimer = Math.max(0, this.dartTimer - dt);
-    if (this.dartTimer <= 0 && this.state === "dart") {
-      this.state = "cruise";
+  for (const ai of aiShips) {
+    if (shipsCollide(ship, ai)) {
+      return { type: "collision", message: "Collision with another vessel." };
     }
-
-    if (toTarget < 35 && this.state === "cruise") {
-      this.restTimer += dt;
-      if (this.restTimer > randomRange(0.8, 2.2)) {
-        if (Math.random() < 0.45) {
-          this.state = "hover";
-          this.restTimer = 0;
-          this.hoverDuration = randomRange(1.2, 2.8);
-        } else {
-          this.pickNewTarget();
-        }
-      }
-    }
-
-    if (this.state === "hover") {
-      this.restTimer += dt;
-      if (this.restTimer > this.hoverDuration) {
-        this.pickNewTarget();
-      }
-    }
-
-    this.burstTimer -= dt;
-    if (this.burstTimer <= 0 && this.state === "cruise") {
-      this.burstTimer = randomRange(5, 11);
-      this.pickNewTarget();
-    }
-
-    const seeking = this.seek(this.targetX, this.targetY, this.state === "hover" ? 0.4 : 1);
-    const wandering = this.state === "cruise" ? this.wander(dt) : { x: 0, y: 0 };
-    const walls = this.avoidWalls();
-    const social = this.interact(other, dt);
-
-    this.ax = seeking.x + wandering.x + walls.x + social.x;
-    this.ay = seeking.y + wandering.y + walls.y + social.y;
-
-    if (this.state === "hover") {
-      this.ax += Math.sin(time * 1.1 + this.finPhase) * 18;
-      this.ay += Math.cos(time * 0.9 + this.finPhase) * 14;
-      this.vx *= 0.92;
-      this.vy *= 0.92;
-    } else {
-      this.ay += Math.sin(time * 0.7 + this.tailPhase) * 8;
-    }
-
-    const drag = this.state === "hover" ? 0.9 : 0.965;
-    this.vx += this.ax * dt;
-    this.vy += this.ay * dt;
-    this.vx *= drag;
-    this.vy *= drag;
-
-    const speed = Math.hypot(this.vx, this.vy);
-    let targetSpeed = this.cruiseSpeed;
-    if (this.state === "hover") targetSpeed = 6;
-    if (this.state === "dart") targetSpeed = this.maxSpeed;
-
-    if (speed > 0.001) {
-      const adjusted = lerp(speed, targetSpeed, 0.06);
-      this.vx = (this.vx / speed) * clamp(adjusted, 4, this.maxSpeed * 1.3);
-      this.vy = (this.vy / speed) * clamp(adjusted, 4, this.maxSpeed * 1.3);
-    }
-
-    this.head.x = clamp(this.head.x, -b.x, b.x);
-    this.head.y = clamp(this.head.y, -b.y, b.y);
-
-    const desiredHeading = Math.atan2(this.vy, this.vx);
-    let diff = desiredHeading - this.heading;
-    while (diff > Math.PI) diff -= Math.PI * 2;
-    while (diff < -Math.PI) diff += Math.PI * 2;
-    const turnLimit = this.maxTurnRate * (0.5 + Math.min(speed, 60) / 120);
-    this.heading += clamp(diff, -turnLimit * dt, turnLimit * dt);
-
-    this.finPhase += dt * (this.state === "hover" ? 6 : 3 + speed * 0.03);
-    this.gillPhase += dt * (1.5 + speed * 0.01);
-    this.updateSpine(dt);
   }
+  return null;
+}
 
-  drawBodyPath(halfWidth) {
-    const pts = this.spine;
-    const top = [];
-    const bot = [];
-
-    for (let i = 0; i < pts.length; i += 1) {
-      const p = pts[i];
-      const t = i / (pts.length - 1);
-      const w = bodyHalfWidth(t, halfWidth);
-      const angle = spineAngleAt(pts, i);
-      const nx = -Math.sin(angle);
-      const ny = Math.cos(angle);
-      top.push({ x: p.x + nx * w, y: p.y + ny * w });
-      bot.push({ x: p.x - nx * w * 0.88, y: p.y - ny * w * 0.88 });
+function checkWaypoint() {
+  const wp = waypoints[currentWaypoint];
+  if (!wp) return;
+  const d = dist(ship.x, ship.y, wp.x, wp.y);
+  if (d < 120) {
+    if (currentWaypoint < waypoints.length - 1) {
+      currentWaypoint++;
+      score += 50;
     }
-
-    ctx.moveTo(top[0].x, top[0].y);
-    for (let i = 1; i < top.length; i += 1) {
-      const mx = (top[i - 1].x + top[i].x) / 2;
-      const my = (top[i - 1].y + top[i].y) / 2;
-      ctx.quadraticCurveTo(top[i - 1].x, top[i - 1].y, mx, my);
-    }
-    ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
-
-    for (let i = bot.length - 1; i >= 0; i -= 1) {
-      if (i === bot.length - 1) ctx.lineTo(bot[i].x, bot[i].y);
-      else {
-        const mx = (bot[i + 1].x + bot[i].x) / 2;
-        const my = (bot[i + 1].y + bot[i].y) / 2;
-        ctx.quadraticCurveTo(bot[i + 1].x, bot[i + 1].y, mx, my);
-      }
-    }
-    ctx.closePath();
   }
+}
 
-  drawScales(halfWidth, s) {
-    const pts = this.spine;
-    for (let i = 3; i < pts.length - 5; i += 1) {
-      const t = i / (pts.length - 1);
-      const p = pts[i];
-      const angle = spineAngleAt(pts, i);
-      const w = bodyHalfWidth(t, halfWidth);
-      const nx = -Math.sin(angle);
-      const ny = Math.cos(angle);
-      const rows = 2;
-      for (let r = 0; r < rows; r += 1) {
-        const offset = (r - 0.5) * w * 0.55;
-        const sx = p.x + nx * offset;
-        const sy = p.y + ny * offset;
-        const scaleW = 2.8 * s * (1 - t * 0.35);
-        const scaleH = 2.1 * s * (1 - t * 0.35);
-        ctx.beginPath();
-        ctx.ellipse(sx, sy, scaleW, scaleH, angle - 0.2, 0, Math.PI * 2);
-        ctx.stroke();
+function checkDocking() {
+  if (currentWaypoint < waypoints.length - 1) return false;
+  const cx = dockZone.x + dockZone.w / 2;
+  const cy = dockZone.y + dockZone.h / 2;
+  const inZone =
+    ship.x > dockZone.x &&
+    ship.x < dockZone.x + dockZone.w &&
+    ship.y > dockZone.y &&
+    ship.y < dockZone.y + dockZone.h;
+  if (!inZone) return false;
+
+  const speed = Math.sqrt(ship.vx * ship.vx + ship.vy * ship.vy) * MPS_TO_KNOTS;
+  const align = Math.abs(normalizeAngle(ship.heading - dockZone.heading));
+  if (speed < DOCK_SPEED_KN && align < DOCK_ALIGN_DEG * DEG) {
+    return true;
+  }
+  return false;
+}
+
+function updateWake(dt) {
+  const speed = Math.sqrt(ship.vx * ship.vx + ship.vy * ship.vy);
+  if (speed > 2) {
+    const cos = Math.cos(ship.heading);
+    const sin = Math.sin(ship.heading);
+    wakeParticles.push({
+      x: ship.x - cos * SHIP_LENGTH * 0.45,
+      y: ship.y - sin * SHIP_LENGTH * 0.45,
+      life: 1,
+      size: 4 + speed * 0.08,
+    });
+  }
+  wakeParticles = wakeParticles.filter((p) => {
+    p.life -= dt * 0.5;
+    p.size += dt * 2;
+    return p.life > 0;
+  });
+  if (wakeParticles.length > 200) wakeParticles.splice(0, wakeParticles.length - 200);
+}
+
+function updateCamera(dt) {
+  const lookX = ship.x + ship.vx * 0.8;
+  const lookY = ship.y + ship.vy * 0.8;
+  camera.x = lerp(camera.x, lookX, clamp(dt * 3, 0, 1));
+  camera.y = lerp(camera.y, lookY, clamp(dt * 3, 0, 1));
+  camera.rot = lerp(camera.rot, ship.heading, clamp(dt * 4, 0, 1));
+}
+
+function updateHUD() {
+  const speed = Math.sqrt(ship.vx * ship.vx + ship.vy * ship.vy) * MPS_TO_KNOTS;
+  const h = getEffectiveHelm();
+  speedLabel.textContent = `${speed.toFixed(1)} kn`;
+  headingLabel.textContent = `${String(headingDeg(ship.heading)).padStart(3, "0")}°`;
+  rudderLabel.textContent = `${Math.round((h.rudder / MAX_RUDDER) * 35)}°`;
+  throttleLabel.textContent = `${Math.round(h.throttle * 100)}%`;
+  const wp = waypoints[currentWaypoint];
+  missionLabel.textContent = `Mission: ${wp ? wp.label : "Complete"}`;
+  scoreLabel.textContent = `Score: ${Math.max(0, Math.round(score - collisionPenalty))}`;
+
+  let warn = false;
+  const corners = shipCorners(ship);
+  for (const poly of landPolygons) {
+    for (const c of corners) {
+      for (const p of poly) {
+        if (dist(c.x, c.y, p.x, p.y) < 100) warn = true;
       }
     }
   }
-
-  drawFinRays(px, py, angle, len, width, flutter, rays, alpha) {
-    ctx.save();
-    ctx.translate(px, py);
-    ctx.rotate(angle);
-    ctx.globalAlpha = alpha;
-    for (let i = 0; i < rays; i += 1) {
-      const t = i / (rays - 1);
-      const spread = (t - 0.5) * width;
-      ctx.strokeStyle = rgba(this.dark, 0.85);
-      ctx.lineWidth = 0.8;
-      ctx.beginPath();
-      ctx.moveTo(0, 0);
-      ctx.quadraticCurveTo(
-        -len * 0.45,
-        spread + flutter * spread * 0.6,
-        -len,
-        spread * 0.35 + flutter * 2
-      );
-      ctx.stroke();
-    }
-    ctx.fillStyle = rgba(this.color, 0.55);
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.quadraticCurveTo(-len * 0.5, -width * 0.5 + flutter, -len, -width * 0.2);
-    ctx.quadraticCurveTo(-len * 0.5, width * 0.5 - flutter, 0, 0);
-    ctx.fill();
-    ctx.restore();
+  for (const ai of aiShips) {
+    if (dist(ship.x, ship.y, ai.x, ai.y) < SHIP_LENGTH * 1.5) warn = true;
   }
+  warningLabel.classList.toggle("hidden", !warn);
+}
 
-  draw() {
-    const cx = width / 2;
-    const cy = height / 2;
-    const s = this.size;
-    const hw = 17 * s;
-    const head = this.spine[0];
-    const snout = this.spine[1];
-    const neck = this.spine[3];
-    const tail = this.spine[this.spine.length - 1];
-    const tailBase = this.spine[this.spine.length - 4];
-    const peduncle = this.spine[this.spine.length - 2];
-    const heading = Math.atan2(snout.y - head.y, snout.x - head.x);
-    const tailAngle = Math.atan2(tail.y - peduncle.y, tail.x - peduncle.x);
-    const speed = Math.hypot(this.vx, this.vy);
-    const tailSwing = this.thrustPhase * (0.4 + speed * 0.004);
-    const finFlutter = Math.sin(this.finPhase) * 0.4;
+function drawOcean() {
+  const grad = ctx.createLinearGradient(0, -height, 0, height);
+  grad.addColorStop(0, "#0c2848");
+  grad.addColorStop(0.5, "#0e3a5c");
+  grad.addColorStop(1, "#082038");
+  ctx.fillStyle = grad;
+  ctx.fillRect(-width, -height, width * 2, height * 2);
 
-    ctx.save();
-    ctx.translate(cx, cy);
-
-    ctx.save();
-    ctx.globalAlpha = 0.18;
-    ctx.fillStyle = "#000";
-    ctx.filter = "blur(4px)";
+  ctx.globalAlpha = 0.15;
+  for (let i = 0; i < 8; i++) {
+    const wy = Math.sin(wavePhase + i * 0.8) * 30;
+    ctx.strokeStyle = "#5ecfff";
+    ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.ellipse(head.x + 4, head.y + 10 * s, 18 * s, 5 * s, heading, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.filter = "none";
-    ctx.restore();
+    for (let x = -width; x < width; x += 40) {
+      const wx = x + Math.sin(wavePhase * 2 + x * 0.01 + i) * 12;
+      const y = wy + i * 35 + Math.sin(x * 0.008 + wavePhase + i) * 8;
+      if (x === -width) ctx.moveTo(wx, y);
+      else ctx.lineTo(wx, y);
+    }
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
 
-    ctx.save();
+function drawLand() {
+  for (const poly of landPolygons) {
+    ctx.fillStyle = "#2a4a32";
+    ctx.strokeStyle = "#4a7a52";
+    ctx.lineWidth = 2;
     ctx.beginPath();
-    this.drawBodyPath(hw);
-    ctx.clip();
-
-    const bodyGrad = ctx.createLinearGradient(
-      head.x + Math.cos(heading + Math.PI / 2) * 20,
-      head.y + Math.sin(heading + Math.PI / 2) * 20,
-      head.x - Math.cos(heading + Math.PI / 2) * 20,
-      head.y - Math.sin(heading + Math.PI / 2) * 20
-    );
-    bodyGrad.addColorStop(0, this.dark);
-    bodyGrad.addColorStop(0.25, this.color);
-    bodyGrad.addColorStop(0.55, this.light);
-    bodyGrad.addColorStop(0.82, this.belly);
-    bodyGrad.addColorStop(1, shade(this.belly, 0.15));
-    ctx.fillStyle = bodyGrad;
-    ctx.fill();
-
-    const flankGrad = ctx.createLinearGradient(head.x - 30, head.y, head.x + 30, head.y);
-    flankGrad.addColorStop(0, rgba(this.light, 0));
-    flankGrad.addColorStop(0.45, rgba("#ffffff", 0.12));
-    flankGrad.addColorStop(0.55, rgba("#ffffff", 0.18));
-    flankGrad.addColorStop(1, rgba(this.light, 0));
-    ctx.fillStyle = flankGrad;
-    ctx.fill();
-
-    ctx.strokeStyle = rgba("#ffffff", 0.07);
-    ctx.lineWidth = 0.7;
-    this.drawScales(hw, s);
-
-    ctx.strokeStyle = rgba(this.light, 0.35);
-    ctx.lineWidth = 1.8;
-    ctx.beginPath();
-    for (let i = 2; i < this.spine.length - 3; i += 1) {
-      const p = this.spine[i];
-      if (i === 2) ctx.moveTo(p.x, p.y);
+    poly.forEach((p, i) => {
+      if (i === 0) ctx.moveTo(p.x, p.y);
       else ctx.lineTo(p.x, p.y);
-    }
-    ctx.stroke();
-    ctx.restore();
-
-    ctx.strokeStyle = rgba(this.dark, 0.7);
-    ctx.lineWidth = 1.1;
-    ctx.beginPath();
-    this.drawBodyPath(hw);
-    ctx.stroke();
-
-    const dorsalPts = [5, 7, 9, 11];
-    dorsalPts.forEach((idx, i) => {
-      const p = this.spine[idx];
-      const a = spineAngleAt(this.spine, idx) - Math.PI / 2;
-      const h = (9 - i * 1.2) * s;
-      this.drawFinRays(p.x, p.y, a, h, 3.5 * s, finFlutter * 0.3, 4, 0.8);
     });
-
-    const analPt = this.spine[10];
-    this.drawFinRays(
-      analPt.x, analPt.y,
-      spineAngleAt(this.spine, 10) + Math.PI / 2,
-      10 * s, 3 * s, finFlutter * 0.25, 4, 0.7
-    );
-
-    this.drawFinRays(
-      head.x + Math.cos(heading) * 6 * s,
-      head.y + Math.sin(heading) * 6 * s,
-      heading + 1.55,
-      14 * s, 8 * s, finFlutter, 5, 0.82
-    );
-    this.drawFinRays(
-      head.x + Math.cos(heading) * 6 * s,
-      head.y + Math.sin(heading) * 6 * s,
-      heading - 1.55,
-      14 * s, 8 * s, finFlutter, 5, 0.82
-    );
-
-    const pelvic = this.spine[6];
-    this.drawFinRays(
-      pelvic.x, pelvic.y,
-      spineAngleAt(this.spine, 6) + Math.PI / 2 + 0.3,
-      9 * s, 4 * s, finFlutter * 0.5, 3, 0.65
-    );
-
-    ctx.save();
-    ctx.translate(tail.x, tail.y);
-    ctx.rotate(tailAngle);
-    const fork = (14 + tailSwing * 10) * s;
-    const forkGrad = ctx.createLinearGradient(-fork, 0, 0, 0);
-    forkGrad.addColorStop(0, this.dark);
-    forkGrad.addColorStop(1, this.color);
-    ctx.fillStyle = forkGrad;
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.quadraticCurveTo(-fork * 0.55, -fork * 0.75, -fork, -fork * 0.55);
-    ctx.quadraticCurveTo(-fork * 0.35, 0, 0, 0);
-    ctx.quadraticCurveTo(-fork * 0.55, fork * 0.75, -fork, fork * 0.55);
-    ctx.quadraticCurveTo(-fork * 0.35, 0, 0, 0);
-    ctx.fill();
-    ctx.strokeStyle = rgba(this.dark, 0.8);
-    ctx.lineWidth = 0.8;
-    for (let r = 0; r < 5; r += 1) {
-      const t = r / 4;
-      ctx.beginPath();
-      ctx.moveTo(0, 0);
-      ctx.lineTo(-fork, (-fork * 0.55) * (1 - t * 2));
-      ctx.stroke();
-    }
-    ctx.restore();
-
-    const noseX = head.x + Math.cos(heading) * 16 * s;
-    const noseY = head.y + Math.sin(heading) * 16 * s;
-    ctx.fillStyle = this.dark;
-    ctx.beginPath();
-    ctx.moveTo(noseX, noseY);
-    ctx.quadraticCurveTo(
-      head.x + Math.cos(heading) * 8 * s - Math.sin(heading) * 5 * s,
-      head.y + Math.sin(heading) * 8 * s + Math.cos(heading) * 5 * s,
-      head.x - Math.cos(heading) * 2 * s,
-      head.y - Math.sin(heading) * 2 * s
-    );
-    ctx.quadraticCurveTo(
-      head.x + Math.cos(heading) * 8 * s + Math.sin(heading) * 5 * s,
-      head.y + Math.sin(heading) * 8 * s - Math.cos(heading) * 5 * s,
-      noseX, noseY
-    );
-    ctx.fill();
-
-    const opercX = head.x - Math.cos(heading) * 3 * s;
-    const opercY = head.y - Math.sin(heading) * 3 * s;
-    ctx.fillStyle = rgba(this.color, 0.9);
-    ctx.strokeStyle = rgba(this.dark, 0.6);
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.arc(opercX, opercY, 7 * s, heading - 1.2, heading + 0.5);
-    ctx.arc(opercX - Math.cos(heading) * 2, opercY - Math.sin(heading) * 2, 6 * s, heading + 0.5, heading + 1.8);
+    ctx.closePath();
     ctx.fill();
     ctx.stroke();
+  }
 
-    const gillOpen = 0.55 + Math.sin(this.gillPhase) * 0.25;
-    ctx.strokeStyle = rgba("#000000", 0.22 * gillOpen);
-    for (let g = 0; g < 4; g += 1) {
-      const gx = head.x - Math.cos(heading) * (5 + g * 2.2) * s;
-      const gy = head.y - Math.sin(heading) * (5 + g * 2.2) * s;
-      ctx.beginPath();
-      ctx.arc(gx, gy, 4.5 * s, heading - 0.6, heading + 0.4);
-      ctx.stroke();
-    }
+  ctx.fillStyle = "#5a6a78";
+  ctx.fillRect(dockZone.x, dockZone.y, dockZone.w, dockZone.h);
+  ctx.strokeStyle = "#8aa0b0";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(dockZone.x, dockZone.y, dockZone.w, dockZone.h);
+  ctx.fillStyle = "rgba(100,200,255,0.2)";
+  ctx.font = "14px system-ui";
+  ctx.textAlign = "center";
+  ctx.fillText("DOCK", dockZone.x + dockZone.w / 2, dockZone.y + dockZone.h / 2);
+}
 
-    const eyeX = head.x + Math.cos(heading) * 11 * s;
-    const eyeY = head.y + Math.sin(heading) * 11 * s;
-    ctx.fillStyle = "#e8eef2";
+function drawBuoys() {
+  for (const b of buoys) {
+    ctx.fillStyle = b.color;
     ctx.beginPath();
-    ctx.ellipse(eyeX, eyeY, 4.2 * s, 3.4 * s, heading, 0, Math.PI * 2);
+    ctx.arc(b.x, b.y, 10, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = rgba(this.dark, 0.8);
-    ctx.lineWidth = 0.8;
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 2;
     ctx.stroke();
-    ctx.fillStyle = "#2d4a32";
+    ctx.fillStyle = "rgba(255,255,255,0.3)";
     ctx.beginPath();
-    ctx.arc(eyeX + Math.cos(heading) * 0.5, eyeY + Math.sin(heading) * 0.5, 2.4 * s, 0, Math.PI * 2);
+    ctx.arc(b.x, b.y - 14, 5, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = "#0a0f14";
-    ctx.beginPath();
-    ctx.arc(eyeX + Math.cos(heading) * 1, eyeY + Math.sin(heading) * 1, 1.4 * s, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "#fff";
-    ctx.beginPath();
-    ctx.arc(eyeX + Math.cos(heading) * 2, eyeY + Math.sin(heading) * 2 - 0.8 * s, 0.9 * s, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.strokeStyle = rgba(this.dark, 0.5);
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(noseX, noseY);
-    ctx.quadraticCurveTo(
-      head.x + Math.cos(heading) * 12 * s,
-      head.y + Math.sin(heading) * 12 * s + 3 * s,
-      head.x + Math.cos(heading) * 4 * s,
-      head.y + Math.sin(heading) * 4 * s + 4 * s
-    );
-    ctx.stroke();
-
-    ctx.fillStyle = rgba("#ffffff", 0.35);
-    ctx.beginPath();
-    ctx.ellipse(
-      head.x + Math.cos(heading) * 4 * s - Math.sin(heading) * 8 * s,
-      head.y + Math.sin(heading) * 4 * s + Math.cos(heading) * 8 * s,
-      10 * s, 3 * s, heading - 0.4, 0, Math.PI * 2
-    );
-    ctx.fill();
-
-    ctx.fillStyle = "rgba(255,255,255,0.9)";
-    ctx.font = `bold ${10 * s}px system-ui, sans-serif`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(
-      this.label,
-      head.x - Math.cos(heading) * 1 * s,
-      head.y - Math.sin(heading) * 1 * s + 5 * s
-    );
-
-    ctx.restore();
   }
 }
 
-const CREATURE_TYPES = [
-  "jellyfish", "minnow", "seahorse", "turtle", "shrimp", "starfish",
-  "crab", "octopus", "eel", "ray", "squid", "clownfish",
-];
-const creaturePalette = [
-  "#c7a7ff", "#ff9ecf", "#8ed8ff", "#ffd28e", "#b5f0c8",
-  "#f0a6a6", "#d4c4a8", "#ff7e67", "#7ec8e3", "#e8d5b5",
-];
-const scenery = [];
-
-class SeaCreature {
-  constructor(type = null) {
-    const b = getBounds();
-    this.type = type || CREATURE_TYPES[Math.floor(Math.random() * CREATURE_TYPES.length)];
-    this.x = randomRange(-b.x, b.x);
-    this.y = randomRange(-b.y, b.y);
-    this.vx = randomRange(-18, 18);
-    this.vy = randomRange(-12, 12);
-    this.phase = Math.random() * Math.PI * 2;
-    this.scale = randomRange(0.95, 1.75);
-    this.depth = randomRange(0.55, 1);
-    this.alpha = lerp(0.62, 0.95, this.depth);
-    this.color = creaturePalette[Math.floor(Math.random() * creaturePalette.length)];
-    this.dark = shade(this.color, -0.3);
-    this.facing = Math.random() < 0.5 ? 1 : -1;
-    this.targetTimer = randomRange(2, 6);
-    this.tx = this.x;
-    this.ty = this.y;
-
-    if (this.type === "minnow") {
-      this.scale *= 0.7;
-      this.vx = randomRange(35, 65) * this.facing;
-      this.alpha = 0.8;
-    }
-    if (this.type === "turtle") this.scale *= 1.5;
-    if (this.type === "ray") this.scale *= 1.4;
-    if (this.type === "eel") this.scale *= 1.2;
-    if (this.type === "squid") this.scale *= 1.15;
-    if (this.type === "starfish" || this.type === "crab") {
-      this.y = b.y * randomRange(0.55, 0.92);
-      this.vy = 0;
-    }
-    if (this.type === "jellyfish") {
-      this.vy = randomRange(-10, -5);
-      this.vx *= 0.35;
-    }
-    if (this.type === "eel") {
-      this.vx = randomRange(20, 40) * this.facing;
-    }
-    if (this.type === "ray") {
-      this.vy = randomRange(-6, 6);
-    }
-  }
-
-  pickTarget() {
-    const b = getBounds();
-    this.tx = randomRange(-b.x, b.x);
-    this.ty = randomRange(-b.y, b.y);
-    if (this.type === "starfish" || this.type === "crab") {
-      this.ty = b.y * randomRange(0.55, 0.92);
-    }
-    if (this.type === "jellyfish") {
-      this.ty = randomRange(-b.y * 0.5, b.y * 0.3);
-    }
-    this.targetTimer = randomRange(2, 7);
-  }
-
-  update(dt, time) {
-    const b = getBounds();
-    this.phase += dt * randomRange(1.2, 2.4);
-    this.targetTimer -= dt;
-    if (this.targetTimer <= 0) this.pickTarget();
-
-    let ax = 0;
-    let ay = 0;
-    const dx = this.tx - this.x;
-    const dy = this.ty - this.y;
-    const dist = Math.hypot(dx, dy);
-
-    if (dist > 1) {
-      const pull = this.type === "shrimp" ? 2.2 : this.type === "turtle" ? 0.35 : 0.9;
-      ax += (dx / dist) * pull * 20;
-      ay += (dy / dist) * pull * 20;
-    }
-
-    if (this.type === "jellyfish") {
-      ay += Math.sin(time * 0.8 + this.phase) * 6 - 4;
-      ax += Math.sin(time * 0.5 + this.phase) * 8;
-    }
-    if (this.type === "seahorse") {
-      ay += Math.sin(time * 1.4 + this.phase) * 10;
-      this.vx *= 0.96;
-    }
-    if (this.type === "octopus") {
-      ax += Math.sin(time * 0.35 + this.phase) * 12;
-      ay += Math.cos(time * 0.28 + this.phase) * 10;
-    }
-    if (this.type === "starfish") {
-      ax += Math.sin(time * 0.2 + this.phase) * 4;
-    }
-    if (this.type === "crab") {
-      if (Math.abs(dx) > 20) {
-        this.facing = dx > 0 ? 1 : -1;
-        ax += this.facing * 16;
-      }
-    }
-    if (this.type === "eel") {
-      ax += Math.sin(time * 0.6 + this.phase) * 14;
-      ay += Math.cos(time * 0.45 + this.phase) * 10;
-    }
-    if (this.type === "ray") {
-      ay += Math.sin(time * 0.5 + this.phase) * 8;
-      ax += Math.cos(time * 0.35 + this.phase) * 6;
-    }
-    if (this.type === "squid") {
-      ay += Math.sin(time * 0.9 + this.phase) * 12 - 3;
-    }
-    if (this.type === "clownfish") {
-      ax += Math.sin(time * 0.7 + this.phase) * 10;
-    }
-
-    const maxSpeed = {
-      jellyfish: 18,
-      minnow: 80,
-      seahorse: 16,
-      turtle: 26,
-      shrimp: 52,
-      starfish: 7,
-      crab: 20,
-      octopus: 24,
-      eel: 55,
-      ray: 28,
-      squid: 32,
-      clownfish: 42,
-    }[this.type];
-
-    this.vx += ax * dt;
-    this.vy += ay * dt;
-    this.vx *= 0.985;
-    this.vy *= 0.985;
-
-    const speed = Math.hypot(this.vx, this.vy);
-    if (speed > maxSpeed) {
-      this.vx = (this.vx / speed) * maxSpeed;
-      this.vy = (this.vy / speed) * maxSpeed;
-    }
-
-    this.x += this.vx * dt;
-    this.y += this.vy * dt;
-    this.x = clamp(this.x, -b.x, b.x);
-    this.y = clamp(this.y, -b.y, b.y);
-
-    if (this.vx > 2) this.facing = 1;
-    if (this.vx < -2) this.facing = -1;
-  }
-
-  draw(cx, cy) {
-    ctx.save();
-    ctx.translate(cx + this.x, cy + this.y);
-    ctx.scale(this.facing * this.scale, this.scale);
-    ctx.globalAlpha = this.alpha;
-
-  const drawers = {
-      jellyfish: () => this.drawJellyfish(),
-      minnow: () => this.drawMinnow(),
-      seahorse: () => this.drawSeahorse(),
-      turtle: () => this.drawTurtle(),
-      shrimp: () => this.drawShrimp(),
-      starfish: () => this.drawStarfish(),
-      crab: () => this.drawCrab(),
-      octopus: () => this.drawOctopus(),
-      eel: () => this.drawEel(),
-      ray: () => this.drawRay(),
-      squid: () => this.drawSquid(),
-      clownfish: () => this.drawClownfish(),
-    };
-    drawers[this.type]();
-    ctx.restore();
-  }
-
-  drawJellyfish() {
-    const pulse = 1 + Math.sin(this.phase * 2) * 0.12;
-    const g = ctx.createRadialGradient(0, -4, 2, 0, -4, 16);
-    g.addColorStop(0, shade(this.color, 0.35));
-    g.addColorStop(1, this.color);
-    ctx.fillStyle = g;
+function drawWaypoints() {
+  for (let i = 0; i < waypoints.length; i++) {
+    const wp = waypoints[i];
+    const active = i === currentWaypoint;
+    ctx.strokeStyle = active ? "#6ecfff" : "rgba(110,207,255,0.35)";
+    ctx.lineWidth = active ? 3 : 1.5;
+    ctx.setLineDash(active ? [] : [8, 8]);
     ctx.beginPath();
-    ctx.arc(0, -4, 12 * pulse, Math.PI, 0);
-    ctx.quadraticCurveTo(14, 2, 0, 6);
-    ctx.quadraticCurveTo(-14, 2, 0, -4);
-    ctx.fill();
-    ctx.strokeStyle = "rgba(255,255,255,0.2)";
-    ctx.lineWidth = 1;
-    for (let i = -2; i <= 2; i += 1) {
-      ctx.beginPath();
-      ctx.moveTo(i * 3, 6);
-      for (let t = 0; t <= 1; t += 0.2) {
-        const y = 6 + t * 18;
-        const x = i * 3 + Math.sin(this.phase * 3 + t * 6 + i) * 4;
-        ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-    }
-  }
-
-  drawMinnow() {
-    ctx.fillStyle = "#b8c7d4";
-    ctx.beginPath();
-    ctx.ellipse(0, 0, 10, 4, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.moveTo(-9, 0);
-    ctx.lineTo(-14, -3 + Math.sin(this.phase * 4) * 2);
-    ctx.lineTo(-14, 3 - Math.sin(this.phase * 4) * 2);
-    ctx.closePath();
-    ctx.fill();
-    ctx.fillStyle = "#111";
-    ctx.beginPath();
-    ctx.arc(5, -1, 1.2, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  drawSeahorse() {
-    ctx.strokeStyle = this.dark;
-    ctx.lineWidth = 3;
-    ctx.lineCap = "round";
-    ctx.beginPath();
-    ctx.moveTo(8, 8);
-    ctx.quadraticCurveTo(0, 0, -2, -14);
-    ctx.quadraticCurveTo(-4, -20, 2, -24);
+    ctx.arc(wp.x, wp.y, active ? 28 : 18, 0, Math.PI * 2);
     ctx.stroke();
-    ctx.fillStyle = this.color;
-    ctx.beginPath();
-    ctx.ellipse(6, 8, 5, 3, 0.4, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(2, -24, 3, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "#111";
-    ctx.beginPath();
-    ctx.arc(4, -23, 1, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  drawTurtle() {
-    ctx.fillStyle = this.dark;
-    ctx.beginPath();
-    ctx.ellipse(0, 0, 18, 14, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = this.color;
-    ctx.beginPath();
-    ctx.ellipse(0, 0, 14, 10, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = "rgba(0,0,0,0.2)";
-    ctx.lineWidth = 1;
-    for (let i = 0; i < 6; i += 1) {
-      const a = (i / 6) * Math.PI * 2;
-      ctx.beginPath();
-      ctx.arc(Math.cos(a) * 6, Math.sin(a) * 4, 2.5, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-    const flip = Math.sin(this.phase * 3) * 0.5;
-    ctx.fillStyle = this.dark;
-    [["-14", flip], ["14", -flip], ["-8", "-10"], ["8", "-10"]].forEach(([x, y]) => {
-      ctx.beginPath();
-      ctx.ellipse(Number(x), Number(y), 6, 3, Number(y) * 0.08, 0, Math.PI * 2);
-      ctx.fill();
-    });
-    ctx.fillStyle = "#111";
-    ctx.beginPath();
-    ctx.arc(12, -4, 2, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  drawShrimp() {
-    const curl = Math.sin(this.phase * 2) * 0.2;
-    ctx.fillStyle = this.color;
-    ctx.beginPath();
-    ctx.ellipse(0, 0, 11, 4.5, curl, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.moveTo(-8, 0);
-    ctx.quadraticCurveTo(-14, -6, -10, -10);
-    ctx.lineTo(-8, -4);
-    ctx.fill();
-    ctx.strokeStyle = this.dark;
-    ctx.lineWidth = 1.2;
-    for (let i = 0; i < 4; i += 1) {
-      ctx.beginPath();
-      ctx.moveTo(-2 + i * 3, 2);
-      ctx.lineTo(-4 + i * 3 + Math.sin(this.phase * 5 + i), 8);
-      ctx.stroke();
-    }
-    ctx.fillStyle = "#111";
-    ctx.beginPath();
-    ctx.arc(7, -1, 1.2, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  drawStarfish() {
-    ctx.fillStyle = this.color;
-    ctx.strokeStyle = this.dark;
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (let i = 0; i < 5; i += 1) {
-      const a = (i / 5) * Math.PI * 2 - Math.PI / 2;
-      const wiggle = Math.sin(this.phase + i) * 0.15;
-      const x = Math.cos(a) * (10 + wiggle * 3);
-      const y = Math.sin(a) * (10 + wiggle * 3);
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    }
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-  }
-
-  drawCrab() {
-    ctx.fillStyle = this.color;
-    ctx.beginPath();
-    ctx.ellipse(0, 0, 10, 7, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = this.dark;
-    for (let i = -1; i <= 1; i += 2) {
-      ctx.beginPath();
-      ctx.ellipse(i * 12, -2, 4, 3, i * 0.4, 0, Math.PI * 2);
+    ctx.setLineDash([]);
+    if (active) {
+      ctx.fillStyle = "rgba(110,207,255,0.25)";
       ctx.fill();
     }
-    ctx.strokeStyle = this.dark;
-    ctx.lineWidth = 1.5;
-    for (let i = 0; i < 4; i += 1) {
-      const side = i < 2 ? -1 : 1;
-      const offset = i % 2 === 0 ? -6 : 4;
+  }
+  if (currentWaypoint > 0) {
+    const prev = waypoints[currentWaypoint - 1];
+    const curr = waypoints[currentWaypoint];
+    if (prev && curr) {
+      ctx.strokeStyle = "rgba(110,207,255,0.2)";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([12, 8]);
       ctx.beginPath();
-      ctx.moveTo(side * 8, offset);
-      for (let s = 0; s <= 1; s += 0.25) {
-        ctx.lineTo(
-          side * (8 + s * 10),
-          offset + Math.sin(this.phase * 4 + s * 4 + i) * 3
-        );
-      }
+      ctx.moveTo(prev.x, prev.y);
+      ctx.lineTo(curr.x, curr.y);
       ctx.stroke();
-    }
-    ctx.fillStyle = "#111";
-    ctx.beginPath();
-    ctx.arc(-3, -3, 1.2, 0, Math.PI * 2);
-    ctx.arc(3, -3, 1.2, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  drawOctopus() {
-    ctx.fillStyle = this.color;
-    ctx.beginPath();
-    ctx.arc(0, -4, 10, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "#111";
-    ctx.beginPath();
-    ctx.arc(-3, -5, 1.5, 0, Math.PI * 2);
-    ctx.arc(3, -5, 1.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = this.dark;
-    ctx.lineWidth = 2;
-    for (let i = 0; i < 6; i += 1) {
-      const spread = (i - 2.5) * 0.35;
-      ctx.beginPath();
-      ctx.moveTo(spread * 4, 4);
-      for (let t = 0; t <= 1; t += 0.2) {
-        const y = 4 + t * 16;
-        const x = spread * 4 + Math.sin(this.phase * 3 + t * 5 + i) * 5;
-        ctx.lineTo(x, y);
-      }
-      ctx.stroke();
+      ctx.setLineDash([]);
     }
   }
+}
 
-  drawEel() {
-    ctx.strokeStyle = this.color;
-    ctx.lineWidth = 7;
-    ctx.lineCap = "round";
+function drawWake() {
+  for (const p of wakeParticles) {
+    ctx.fillStyle = `rgba(180, 220, 255, ${p.life * 0.35})`;
     ctx.beginPath();
-    for (let i = 0; i <= 10; i += 1) {
-      const t = i / 10;
-      const x = -20 + t * 40;
-      const y = Math.sin(this.phase * 2 + t * 5) * 10;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    }
-    ctx.stroke();
-    ctx.fillStyle = this.dark;
-    ctx.beginPath();
-    ctx.arc(18, Math.sin(this.phase * 2 + 5) * 2, 4, 0, Math.PI * 2);
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = "#ffee55";
-    ctx.beginPath();
-    ctx.arc(19, Math.sin(this.phase * 2 + 5) * 2 - 1, 1.2, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  drawRay() {
-    const flap = Math.sin(this.phase * 3) * 0.25;
-    ctx.fillStyle = this.color;
-    ctx.beginPath();
-    ctx.moveTo(-16, 0);
-    ctx.quadraticCurveTo(0, -14 - flap * 10, 16, 0);
-    ctx.quadraticCurveTo(0, 8, -16, 0);
-    ctx.fill();
-    ctx.strokeStyle = this.dark;
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    ctx.fillStyle = this.dark;
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(0, 14);
-    ctx.lineTo(-3, 20);
-    ctx.lineTo(3, 20);
-    ctx.closePath();
-    ctx.fill();
-    ctx.fillStyle = "#111";
-    ctx.beginPath();
-    ctx.arc(10, -2, 1.5, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  drawSquid() {
-    ctx.fillStyle = this.color;
-    ctx.beginPath();
-    ctx.moveTo(-12, 0);
-    ctx.quadraticCurveTo(0, -10, 14, 0);
-    ctx.quadraticCurveTo(0, 8, -12, 0);
-    ctx.fill();
-    ctx.fillStyle = this.dark;
-    ctx.beginPath();
-    ctx.ellipse(8, -1, 5, 4, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "#111";
-    ctx.beginPath();
-    ctx.arc(10, -2, 1.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = this.dark;
-    ctx.lineWidth = 2;
-    for (let i = 0; i < 5; i += 1) {
-      const spread = (i - 2) * 0.4;
-      ctx.beginPath();
-      ctx.moveTo(-8, 2);
-      for (let t = 0; t <= 1; t += 0.15) {
-        const y = 2 + t * 18;
-        const x = -8 + spread * t * 12 + Math.sin(this.phase * 4 + t * 6 + i) * 4;
-        ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-    }
-  }
-
-  drawClownfish() {
-    const w = Math.sin(this.phase * 4) * 2;
-    ctx.fillStyle = "#ff6b35";
-    ctx.beginPath();
-    ctx.ellipse(0, 0, 12, 6, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = "#fff";
-    ctx.fillRect(-2, -6, 4, 12);
-    ctx.fillRect(4, -5, 3, 10);
-    ctx.fillStyle = "#111";
-    ctx.fillRect(0, -6, 2, 12);
-    ctx.beginPath();
-    ctx.moveTo(-11, 0);
-    ctx.lineTo(-17, -4 + w);
-    ctx.lineTo(-17, 4 - w);
-    ctx.closePath();
-    ctx.fillStyle = "#ff6b35";
-    ctx.fill();
-    ctx.fillStyle = "#111";
-    ctx.beginPath();
-    ctx.arc(7, -2, 1.5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = "#ff6b35";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(-2, -6);
-    ctx.lineTo(2, -10);
-    ctx.stroke();
   }
 }
 
-let fishA;
-let fishB;
-let creatures = [];
-let lastTime = performance.now();
-
-function initCreatures() {
-  creatures = [];
-  CREATURE_TYPES.forEach((type) => {
-    creatures.push(new SeaCreature(type));
-    creatures.push(new SeaCreature(type));
-  });
-
-  const extra = width < 768 ? 18 : 30;
-  for (let i = 0; i < extra; i += 1) {
-    creatures.push(new SeaCreature());
-  }
-
-  const schools = width < 768 ? 5 : 9;
-  for (let s = 0; s < schools; s += 1) {
-    const baseX = randomRange(-getBounds().x * 0.7, getBounds().x * 0.7);
-    const baseY = randomRange(-getBounds().y * 0.7, getBounds().y * 0.7);
-    for (let i = 0; i < 6; i += 1) {
-      const m = new SeaCreature("minnow");
-      m.x = baseX + randomRange(-35, 35);
-      m.y = baseY + randomRange(-25, 25);
-      creatures.push(m);
-    }
-  }
-
-  creatures.sort((a, b) => a.depth - b.depth);
-}
-
-function initScenery() {
-  scenery.length = 0;
-  const b = getBounds();
-  const count = width < 768 ? 10 : 18;
-  for (let i = 0; i < count; i += 1) {
-    scenery.push({
-      x: randomRange(-b.x, b.x),
-      type: Math.random() < 0.55 ? "seaweed" : "coral",
-      height: randomRange(50, 120),
-      color: creaturePalette[Math.floor(Math.random() * creaturePalette.length)],
-      phase: randomRange(0, Math.PI * 2),
-    });
-  }
-}
-
-function initFish() {
-  fishA = new Fish({ color: "#3ecf6e", label: "A", x: -120, y: 30 });
-  fishB = new Fish({ color: "#4da3ff", label: "B", x: 100, y: -40 });
-}
-
-function initBubbles() {
-  bubbles.length = 0;
-  const count = width < 768 ? 22 : 36;
-  for (let i = 0; i < count; i += 1) {
-    bubbles.push({
-      x: randomRange(-width * 0.5, width * 0.5),
-      y: randomRange(-height * 0.5, height * 0.5),
-      r: randomRange(1.5, 5),
-      speed: randomRange(10, 24),
-      wobble: randomRange(0, Math.PI * 2),
-      alpha: randomRange(0.04, 0.12),
-    });
-  }
-}
-
-function initCaustics() {
-  caustics.length = 0;
-  for (let i = 0; i < 5; i += 1) {
-    caustics.push({ offset: randomRange(0, Math.PI * 2), speed: randomRange(0.2, 0.5) });
-  }
-}
-
-function drawBackground(time) {
-  const g = ctx.createLinearGradient(0, 0, 0, height);
-  g.addColorStop(0, "#103a5e");
-  g.addColorStop(0.55, "#0a2238");
-  g.addColorStop(1, "#050d14");
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, width, height);
-
+function drawShip(s, isPlayer) {
   ctx.save();
-  ctx.globalAlpha = 0.07;
-  ctx.fillStyle = "#9fdfff";
-  caustics.forEach((c, i) => {
-    const y = height * (0.15 + i * 0.14) + Math.sin(time * c.speed + c.offset) * 12;
-    ctx.beginPath();
-    for (let x = 0; x <= width; x += 30) {
-      const wave = Math.sin(x * 0.012 + time * 0.7 + c.offset) * 18;
-      if (x === 0) ctx.moveTo(x, y + wave);
-      else ctx.lineTo(x, y + wave);
-    }
-    ctx.lineTo(width, height);
-    ctx.lineTo(0, height);
-    ctx.closePath();
-    ctx.fill();
-  });
-  ctx.restore();
+  ctx.translate(s.x, s.y);
+  ctx.rotate(s.heading);
 
-  bubbles.forEach((b) => {
-    b.y -= b.speed * 0.016;
-    b.x += Math.sin(time * 0.75 + b.wobble) * 0.35;
-    if (b.y < -height * 0.55) {
-      b.y = height * 0.55;
-      b.x = randomRange(-width * 0.5, width * 0.5);
-    }
-    ctx.fillStyle = `rgba(220, 245, 255, ${b.alpha})`;
-    ctx.beginPath();
-    ctx.arc(width / 2 + b.x, height / 2 + b.y, b.r, 0, Math.PI * 2);
-    ctx.fill();
-  });
+  const len = SHIP_LENGTH;
+  const hw = SHIP_WIDTH * 0.5;
 
-  ctx.strokeStyle = "rgba(140, 200, 240, 0.06)";
-  ctx.lineWidth = 1;
-  for (let i = 0; i < 5; i += 1) {
-    const y = height * 0.18 + i * height * 0.13;
+  ctx.fillStyle = isPlayer ? "#f0f4f8" : s.color;
+  ctx.strokeStyle = isPlayer ? "#8899aa" : "#666";
+  ctx.lineWidth = 2;
+
+  ctx.beginPath();
+  ctx.moveTo(len * 0.5, 0);
+  ctx.lineTo(len * 0.15, -hw);
+  ctx.lineTo(-len * 0.42, -hw);
+  ctx.lineTo(-len * 0.48, -hw * 0.6);
+  ctx.lineTo(-len * 0.48, hw * 0.6);
+  ctx.lineTo(-len * 0.42, hw);
+  ctx.lineTo(len * 0.15, hw);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = "#d0dae4";
+  ctx.fillRect(-len * 0.1, -hw * 0.7, len * 0.35, hw * 1.4);
+  ctx.fillRect(len * 0.05, -hw * 0.5, len * 0.2, hw);
+
+  ctx.fillStyle = "#cc4444";
+  ctx.fillRect(-len * 0.25, -4, 12, 8);
+
+  if (isPlayer) {
+    ctx.strokeStyle = "#6ecfff";
+    ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.moveTo(0, y);
-    for (let x = 0; x <= width; x += 36) {
-      ctx.lineTo(x, y + Math.sin(x * 0.008 + time * 0.35 + i) * 5);
-    }
+    ctx.moveTo(0, 0);
+    ctx.lineTo(len * 0.5, 0);
     ctx.stroke();
   }
 
-  const floorY = height / 2 + getBounds().y * 0.88;
-  scenery.forEach((item) => {
-    const x = width / 2 + item.x;
-    ctx.save();
-    if (item.type === "seaweed") {
-      ctx.strokeStyle = shade(item.color, -0.25);
-      ctx.lineWidth = 3;
-      for (let s = -1; s <= 1; s += 1) {
-        ctx.beginPath();
-        ctx.moveTo(x + s * 8, floorY);
-        for (let t = 0; t <= 1; t += 0.1) {
-          const y = floorY - t * item.height;
-          const wave = Math.sin(time * 1.2 + item.phase + t * 4 + s) * (8 + t * 10);
-          ctx.lineTo(x + s * 8 + wave, y);
-        }
-        ctx.stroke();
-      }
-    } else {
-      ctx.fillStyle = item.color;
-      ctx.globalAlpha = 0.75;
-      for (let b = 0; b < 4; b += 1) {
-        ctx.beginPath();
-        ctx.arc(x + (b - 1.5) * 12, floorY - 8 - b * 6, 8 + b * 2, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.globalAlpha = 1;
-    }
-    ctx.restore();
-  });
+  ctx.restore();
 }
 
-function animate(now) {
-  const dt = Math.min((now - lastTime) / 1000, 0.05);
+function drawWorld() {
+  ctx.save();
+  ctx.translate(width / 2, height / 2);
+  ctx.rotate(-camera.rot + Math.PI / 2);
+  ctx.translate(-camera.x, -camera.y);
+
+  drawOcean();
+  drawLand();
+  drawBuoys();
+  drawWaypoints();
+  drawWake();
+
+  for (const ai of aiShips) drawShip(ai, false);
+  drawShip(ship, true);
+
+  ctx.restore();
+}
+
+function drawMinimap() {
+  const mw = minimapCanvas.width;
+  const mh = minimapCanvas.height;
+  const scale = Math.min(mw / WORLD_W, mh / WORLD_H) * 0.88;
+  const ox = mw / 2;
+  const oy = mh / 2;
+
+  minimapCtx.clearRect(0, 0, mw, mh);
+  minimapCtx.fillStyle = "#0a2840";
+  minimapCtx.beginPath();
+  minimapCtx.arc(mw / 2, mh / 2, mw / 2 - 2, 0, Math.PI * 2);
+  minimapCtx.fill();
+
+  minimapCtx.save();
+  minimapCtx.translate(ox, oy);
+  minimapCtx.scale(scale, scale);
+  minimapCtx.translate(-WORLD_W / 2, -WORLD_H / 2);
+
+  minimapCtx.fillStyle = "#2a4a32";
+  for (const poly of landPolygons) {
+    minimapCtx.beginPath();
+    poly.forEach((p, i) => {
+      if (i === 0) minimapCtx.moveTo(p.x, p.y);
+      else minimapCtx.lineTo(p.x, p.y);
+    });
+    minimapCtx.closePath();
+    minimapCtx.fill();
+  }
+
+  minimapCtx.strokeStyle = "rgba(110,207,255,0.5)";
+  minimapCtx.fillStyle = "rgba(110,207,255,0.3)";
+  for (let i = 0; i < waypoints.length; i++) {
+    const wp = waypoints[i];
+    minimapCtx.beginPath();
+    minimapCtx.arc(wp.x, wp.y, i === currentWaypoint ? 20 : 12, 0, Math.PI * 2);
+    if (i === currentWaypoint) minimapCtx.fill();
+    minimapCtx.stroke();
+  }
+
+  minimapCtx.fillStyle = "#6a8a9a";
+  for (const ai of aiShips) {
+    minimapCtx.fillRect(ai.x - 15, ai.y - 5, 30, 10);
+  }
+
+  minimapCtx.fillStyle = "#6ecfff";
+  minimapCtx.beginPath();
+  minimapCtx.arc(ship.x, ship.y, 10, 0, Math.PI * 2);
+  minimapCtx.fill();
+
+  minimapCtx.strokeStyle = "rgba(255,255,255,0.6)";
+  minimapCtx.lineWidth = 2 / scale;
+  const vx = Math.cos(ship.heading) * 30;
+  const vy = Math.sin(ship.heading) * 30;
+  minimapCtx.beginPath();
+  minimapCtx.moveTo(ship.x, ship.y);
+  minimapCtx.lineTo(ship.x + vx, ship.y + vy);
+  minimapCtx.stroke();
+
+  minimapCtx.restore();
+
+  minimapCtx.strokeStyle = "rgba(110,207,255,0.4)";
+  minimapCtx.lineWidth = 2;
+  minimapCtx.beginPath();
+  minimapCtx.arc(mw / 2, mh / 2, mw / 2 - 2, 0, Math.PI * 2);
+  minimapCtx.stroke();
+}
+
+function endGame(type, message) {
+  gameState = type;
+  hud.classList.add("hidden");
+  touchControls.classList.add("hidden");
+  if (type === "success") {
+    const finalScore = Math.max(0, Math.round(score - collisionPenalty));
+    const mins = Math.floor(missionTime / 60);
+    const secs = Math.floor(missionTime % 60);
+    successScore.textContent = `Score: ${finalScore}`;
+    successTime.textContent = `Time: ${mins}:${String(secs).padStart(2, "0")}`;
+    successScreen.classList.remove("hidden");
+  } else {
+    gameoverTitle.textContent = type === "ground" ? "Grounded!" : "Collision!";
+    gameoverReason.textContent = message;
+    gameoverScreen.classList.remove("hidden");
+  }
+}
+
+function update(dt) {
+  if (gameState !== "playing") return;
+
+  missionTime += dt;
+  wavePhase += dt;
+  score = Math.max(0, score - dt * 2);
+
+  updateHelmFromKeyboard(dt);
+  const input = getEffectiveHelm();
+  helm.throttle = input.throttle;
+  applyPhysics(ship, input, dt);
+
+  for (const ai of aiShips) updateAI(ai, dt);
+
+  const hit = checkCollisions();
+  if (hit) {
+    endGame(hit.type, hit.message);
+    return;
+  }
+
+  checkWaypoint();
+  if (checkDocking()) {
+    score += 300;
+    endGame("success", "");
+    return;
+  }
+
+  updateWake(dt);
+  updateCamera(dt);
+  updateHUD();
+}
+
+function render() {
+  ctx.clearRect(0, 0, width, height);
+  if (gameState === "playing" || gameState === "success" || gameState === "ground" || gameState === "collision") {
+    drawWorld();
+    drawMinimap();
+  }
+}
+
+function loop(now) {
+  const dt = Math.min((now - lastTime) / 1000, MAX_DT);
   lastTime = now;
-  const time = now / 1000;
-
-  drawBackground(time);
-
-  creatures.forEach((creature) => {
-    creature.update(dt, time);
-    creature.draw(width / 2, height / 2);
-  });
-
-  fishA.update(dt, fishB, time);
-  fishB.update(dt, fishA, time);
-  fishA.draw();
-  fishB.draw();
-
-  requestAnimationFrame(animate);
+  update(dt);
+  render();
+  requestAnimationFrame(loop);
 }
 
-window.addEventListener("resize", () => {
-  resize();
-  initFish();
-  initCreatures();
-  initScenery();
-  initBubbles();
-});
+function startGame() {
+  resetGame();
+  gameState = "playing";
+  startScreen.classList.add("hidden");
+  gameoverScreen.classList.add("hidden");
+  successScreen.classList.add("hidden");
+  hud.classList.remove("hidden");
+  if (width < 768) touchControls.classList.remove("hidden");
+}
 
+function setupInput() {
+  window.addEventListener("keydown", (e) => {
+    keys[e.key.toLowerCase()] = true;
+    if (e.key === " " && gameState === "playing") e.preventDefault();
+    if (e.key.toLowerCase() === "r" && (gameState === "playing" || gameState === "ground" || gameState === "collision" || gameState === "success")) {
+      startGame();
+    }
+  });
+  window.addEventListener("keyup", (e) => {
+    keys[e.key.toLowerCase()] = false;
+  });
+
+  startBtn.addEventListener("click", startGame);
+  restartBtn.addEventListener("click", startGame);
+  successRestartBtn.addEventListener("click", startGame);
+
+  document.querySelectorAll(".touch-btn").forEach((btn) => {
+    const action = btn.dataset.action;
+    const setBow = (v) => {
+      touchBow = v;
+      btn.classList.toggle("active", v !== 0);
+    };
+    btn.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      if (action === "bow-port") setBow(-1);
+      if (action === "bow-starboard") setBow(1);
+    });
+    btn.addEventListener("pointerup", () => setBow(0));
+    btn.addEventListener("pointerleave", () => setBow(0));
+  });
+
+  let rudderDrag = false;
+  rudderWheel.addEventListener("pointerdown", (e) => {
+    rudderDrag = true;
+    rudderWheel.setPointerCapture(e.pointerId);
+    updateRudderTouch(e);
+  });
+  rudderWheel.addEventListener("pointermove", (e) => {
+    if (rudderDrag) updateRudderTouch(e);
+  });
+  rudderWheel.addEventListener("pointerup", () => {
+    rudderDrag = false;
+  });
+
+  function updateRudderTouch(e) {
+    const rect = rudderWheel.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const angle = Math.atan2(e.clientY - cy, e.clientX - cx) + Math.PI / 2;
+    touchRudder = clamp(angle, -MAX_RUDDER, MAX_RUDDER);
+    const deg = (touchRudder / MAX_RUDDER) * 90;
+    rudderKnob.style.transform = `rotate(${deg}deg)`;
+  }
+
+  let throttleDrag = false;
+  throttleSlider.addEventListener("pointerdown", (e) => {
+    throttleDrag = true;
+    throttleSlider.setPointerCapture(e.pointerId);
+    updateThrottleTouch(e);
+  });
+  throttleSlider.addEventListener("pointermove", (e) => {
+    if (throttleDrag) updateThrottleTouch(e);
+  });
+  throttleSlider.addEventListener("pointerup", () => {
+    throttleDrag = false;
+  });
+
+  function updateThrottleTouch(e) {
+    const track = throttleSlider.querySelector(".throttle-track");
+    const rect = track.getBoundingClientRect();
+    const t = 1 - clamp((e.clientY - rect.top) / rect.height, 0, 1);
+    touchThrottle = t * 2 - 1;
+    throttleThumb.style.top = `${(1 - (touchThrottle + 1) / 2) * 100}%`;
+    throttleThumb.style.transform = "translateY(-50%)";
+    throttleFill.style.height = `${((touchThrottle + 1) / 2) * 100}%`;
+  }
+}
+
+window.addEventListener("resize", resize);
+setupInput();
 resize();
-initFish();
-initCreatures();
-initScenery();
-initBubbles();
-initCaustics();
-requestAnimationFrame(animate);
+resetGame();
+requestAnimationFrame((t) => {
+  lastTime = t;
+  requestAnimationFrame(loop);
+});

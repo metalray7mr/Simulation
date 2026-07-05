@@ -14,6 +14,7 @@ body {
   background: #0a1628;
   color: #e8f4ff;
   -webkit-tap-highlight-color: transparent;
+  user-select: none;
 }
 
 #app {
@@ -23,88 +24,322 @@ body {
   height: 100dvh;
 }
 
-#scene {
+#game {
   display: block;
   width: 100%;
   height: 100%;
   touch-action: none;
 }
 
-.hud,
-.legend {
+#minimap {
   position: absolute;
-  left: 0;
-  right: 0;
-  padding: 0.85rem 1rem;
+  top: max(0.75rem, env(safe-area-inset-top));
+  right: max(0.75rem, env(safe-area-inset-right));
+  width: 140px;
+  height: 140px;
+  border-radius: 50%;
+  border: 2px solid rgba(120, 200, 255, 0.45);
+  background: rgba(4, 16, 32, 0.75);
   pointer-events: none;
+  z-index: 5;
 }
 
-.hud {
-  top: 0;
-  background: linear-gradient(180deg, rgba(4, 12, 24, 0.82), transparent);
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  padding-top: max(1rem, env(safe-area-inset-top));
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  z-index: 20;
 }
 
-.hud h1 {
-  margin: 0;
-  font-size: clamp(1.1rem, 4vw, 1.6rem);
+.overlay.hidden {
+  display: none;
+}
+
+.panel {
+  width: min(92vw, 480px);
+  padding: 1.5rem 1.75rem;
+  border-radius: 16px;
+  background: rgba(8, 20, 40, 0.92);
+  border: 1px solid rgba(100, 180, 255, 0.25);
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.45);
+  text-align: center;
+}
+
+.panel h1,
+.panel h2 {
+  margin: 0 0 0.5rem;
+  font-size: clamp(1.4rem, 5vw, 1.9rem);
   font-weight: 600;
   letter-spacing: 0.02em;
 }
 
-.hud p {
-  margin: 0.35rem 0 0;
-  font-size: clamp(0.8rem, 2.8vw, 0.95rem);
-  opacity: 0.82;
+.subtitle {
+  margin: 0 0 1rem;
+  font-size: 0.95rem;
+  opacity: 0.85;
+  line-height: 1.45;
 }
 
-.legend {
-  bottom: 0;
+.controls-list {
+  list-style: none;
+  margin: 0 0 1.25rem;
+  padding: 0;
+  text-align: left;
+  font-size: 0.85rem;
+  line-height: 1.7;
+  opacity: 0.9;
+}
+
+.controls-list kbd {
+  display: inline-block;
+  min-width: 1.5rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  font-family: inherit;
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.hint {
+  margin: 0.75rem 0 0;
+  font-size: 0.8rem;
+  opacity: 0.65;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border: none;
+  border-radius: 10px;
+  padding: 0.75rem 1.5rem;
+  background: linear-gradient(180deg, #3b8fd9, #2563a8);
+  color: #fff;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  transition: transform 0.1s, filter 0.15s;
+}
+
+button:hover {
+  filter: brightness(1.1);
+}
+
+button:active {
+  transform: scale(0.97);
+}
+
+#hud {
+  align-items: flex-start;
+  justify-content: flex-start;
+  pointer-events: none;
+  background: none;
+  padding: max(0.75rem, env(safe-area-inset-top)) max(0.75rem, env(safe-area-inset-right))
+    max(0.75rem, env(safe-area-inset-bottom)) max(0.75rem, env(safe-area-inset-left));
+}
+
+.hud-top {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
-  justify-content: center;
-  padding-bottom: max(0.85rem, env(safe-area-inset-bottom));
-  background: linear-gradient(0deg, rgba(4, 12, 24, 0.88), transparent);
+  max-width: calc(100% - 160px);
 }
 
-.chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  padding: 0.4rem 0.7rem;
-  border-radius: 999px;
-  font-size: clamp(0.72rem, 2.5vw, 0.85rem);
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  backdrop-filter: blur(8px);
+.instrument {
+  display: flex;
+  flex-direction: column;
+  min-width: 72px;
+  padding: 0.45rem 0.65rem;
+  border-radius: 8px;
+  background: rgba(4, 16, 32, 0.78);
+  border: 1px solid rgba(100, 180, 255, 0.2);
 }
 
-.chip::before {
-  content: "";
-  width: 0.65rem;
-  height: 0.65rem;
+.instrument .label {
+  font-size: 0.65rem;
+  letter-spacing: 0.12em;
+  opacity: 0.65;
+}
+
+.instrument .value {
+  font-size: 1rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.hud-mission {
+  margin-top: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  background: rgba(4, 16, 32, 0.65);
+  font-size: 0.85rem;
+  max-width: calc(100% - 160px);
+}
+
+.warning {
+  margin: 0.5rem 0 0;
+  padding: 0.4rem 0.75rem;
+  border-radius: 6px;
+  background: rgba(220, 50, 50, 0.85);
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.85rem;
+  letter-spacing: 0.08em;
+  animation: pulse 0.8s ease-in-out infinite alternate;
+}
+
+.warning.hidden {
+  display: none;
+}
+
+@keyframes pulse {
+  from {
+    opacity: 0.75;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.touch-controls {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.touch-controls.hidden {
+  display: none;
+}
+
+.thruster-row {
+  position: absolute;
+  bottom: max(1rem, env(safe-area-inset-bottom));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 0.5rem;
+  pointer-events: auto;
+}
+
+.touch-btn {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.75rem;
+  background: rgba(8, 30, 60, 0.85);
+  border: 1px solid rgba(100, 180, 255, 0.35);
+}
+
+.touch-btn.active {
+  background: rgba(50, 120, 200, 0.9);
+}
+
+.helm-row {
+  position: absolute;
+  bottom: max(4rem, calc(env(safe-area-inset-bottom) + 3rem));
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding: 0 1rem;
+  pointer-events: none;
+}
+
+.rudder-wheel {
+  position: relative;
+  width: 110px;
+  height: 110px;
   border-radius: 50%;
-  flex-shrink: 0;
+  background: rgba(8, 24, 48, 0.82);
+  border: 2px solid rgba(100, 180, 255, 0.35);
+  pointer-events: auto;
+  touch-action: none;
 }
 
-.chip-a::before {
-  background: #3ecf6e;
-  box-shadow: 0 0 8px rgba(62, 207, 110, 0.7);
+.rudder-knob {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  width: 14px;
+  height: 14px;
+  margin-left: -7px;
+  border-radius: 50%;
+  background: #6ecfff;
+  box-shadow: 0 0 8px rgba(110, 207, 255, 0.6);
+  transform-origin: 50% 47px;
 }
 
-.chip-b::before {
-  background: #4da3ff;
-  box-shadow: 0 0 8px rgba(77, 163, 255, 0.7);
+.throttle-slider {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  pointer-events: auto;
+  touch-action: none;
 }
 
-@media (max-width: 480px) {
-  .hud,
-  .legend {
-    padding-left: 0.75rem;
-    padding-right: 0.75rem;
+.throttle-track {
+  position: relative;
+  width: 48px;
+  height: 140px;
+  border-radius: 24px;
+  background: rgba(8, 24, 48, 0.82);
+  border: 2px solid rgba(100, 180, 255, 0.35);
+  overflow: hidden;
+}
+
+.throttle-fill {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 50%;
+  background: linear-gradient(180deg, rgba(80, 180, 255, 0.5), rgba(40, 120, 200, 0.7));
+  pointer-events: none;
+}
+
+.throttle-thumb {
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  height: 20px;
+  border-radius: 10px;
+  background: #6ecfff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.slider-label {
+  font-size: 0.7rem;
+  opacity: 0.7;
+  letter-spacing: 0.06em;
+}
+
+@media (min-width: 768px) {
+  .touch-controls {
+    display: none !important;
+  }
+}
+
+@media (max-width: 767px) {
+  .hud-top,
+  .hud-mission {
+    max-width: calc(100% - 1rem);
   }
 
-  .legend {
-    justify-content: flex-start;
+  #minimap {
+    width: 100px;
+    height: 100px;
+    top: auto;
+    bottom: max(11rem, calc(env(safe-area-inset-bottom) + 10rem));
   }
 }
