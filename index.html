@@ -5,46 +5,92 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#0a1628" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <title>Ocean Feast</title>
+    <title>Cruise Ship Simulator</title>
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
     <div id="app">
       <canvas id="game"></canvas>
+      <canvas id="minimap" width="140" height="140" aria-hidden="true"></canvas>
 
       <div id="start-screen" class="overlay">
         <div class="panel">
-          <h1>Ocean Feast</h1>
-          <p class="subtitle">Tilt your phone to swim. Eat smaller fish. Avoid the big ones.</p>
-          <label class="name-field">
-            <span>Your name</span>
-            <input id="player-name" type="text" maxlength="16" placeholder="Fish" autocomplete="nickname" />
-          </label>
-          <button id="start-btn" type="button">Start</button>
-          <p class="hint">Tap anywhere to swim. Multiplayer works when the game server is running.</p>
-          <p id="mp-status" class="hint">Connecting to server...</p>
+          <h1>Cruise Ship Simulator</h1>
+          <p class="subtitle">Take the helm. Navigate the harbor channel, follow the buoys, and dock at the pier.</p>
+          <ul class="controls-list">
+            <li><kbd>W</kbd>/<kbd>S</kbd> — Throttle forward / reverse</li>
+            <li><kbd>A</kbd>/<kbd>D</kbd> — Rudder port / starboard</li>
+            <li><kbd>Q</kbd>/<kbd>E</kbd> — Bow thrusters</li>
+            <li><kbd>Space</kbd> — Center rudder</li>
+            <li><kbd>R</kbd> — Restart mission</li>
+          </ul>
+          <button id="start-btn" type="button">Set Sail</button>
+          <p class="hint">Touch controls available on mobile. Gamepad supported.</p>
         </div>
       </div>
 
-      <canvas id="minimap" width="112" height="112" aria-hidden="true"></canvas>
-
       <div id="hud" class="overlay hidden" aria-hidden="true">
-        <div class="hud-bar">
-          <span id="score-label">Score: 0</span>
-          <span id="size-label">Size: 1.0</span>
-          <span id="players-label">Players: 1</span>
+        <div class="hud-top">
+          <div class="instrument">
+            <span class="label">SPD</span>
+            <span id="speed-label" class="value">0.0 kn</span>
+          </div>
+          <div class="instrument">
+            <span class="label">HDG</span>
+            <span id="heading-label" class="value">000°</span>
+          </div>
+          <div class="instrument">
+            <span class="label">RUD</span>
+            <span id="rudder-label" class="value">0°</span>
+          </div>
+          <div class="instrument">
+            <span class="label">THR</span>
+            <span id="throttle-label" class="value">0%</span>
+          </div>
         </div>
-        <p id="control-hint" class="control-hint">Tilt phone or tap to swim</p>
+        <div class="hud-mission">
+          <span id="mission-label">Mission: Depart pier</span>
+          <span id="score-label">Score: 1000</span>
+        </div>
+        <p id="warning-label" class="warning hidden">COLLISION WARNING</p>
+      </div>
+
+      <div id="touch-controls" class="touch-controls hidden" aria-hidden="true">
+        <div class="thruster-row">
+          <button type="button" class="touch-btn" data-action="bow-port">Q Bow Port</button>
+          <button type="button" class="touch-btn" data-action="bow-starboard">E Bow Stbd</button>
+        </div>
+        <div class="helm-row">
+          <div class="rudder-wheel" id="rudder-wheel">
+            <div class="rudder-knob" id="rudder-knob"></div>
+          </div>
+          <div class="throttle-slider" id="throttle-slider">
+            <div class="throttle-track">
+              <div class="throttle-fill" id="throttle-fill"></div>
+              <div class="throttle-thumb" id="throttle-thumb"></div>
+            </div>
+            <span class="slider-label">Throttle</span>
+          </div>
+        </div>
+      </div>
+
+      <div id="success-screen" class="overlay hidden" aria-hidden="true">
+        <div class="panel">
+          <h2>Docked Successfully!</h2>
+          <p id="success-score">Score: 1000</p>
+          <p id="success-time">Time: 0:00</p>
+          <button id="success-restart-btn" type="button">Sail Again</button>
+        </div>
       </div>
 
       <div id="gameover-screen" class="overlay hidden" aria-hidden="true">
         <div class="panel">
-          <h2>You got eaten!</h2>
-          <p id="final-score">Score: 0</p>
-          <button id="restart-btn" type="button">Play Again</button>
+          <h2 id="gameover-title">Grounded!</h2>
+          <p id="gameover-reason">Your vessel struck land.</p>
+          <button id="restart-btn" type="button">Try Again</button>
         </div>
       </div>
     </div>
-    <script src="main.js?v=3"></script>
+    <script src="main.js"></script>
   </body>
 </html>

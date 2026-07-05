@@ -1,63 +1,137 @@
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
-
-const startScreen = document.getElementById("start-screen");
-const gameoverScreen = document.getElementById("gameover-screen");
-const hud = document.getElementById("hud");
-const startBtn = document.getElementById("start-btn");
-const restartBtn = document.getElementById("restart-btn");
-const scoreLabel = document.getElementById("score-label");
-const sizeLabel = document.getElementById("size-label");
-const finalScoreLabel = document.getElementById("final-score");
-const controlHint = document.getElementById("control-hint");
-const app = document.getElementById("app");
 const minimapCanvas = document.getElementById("minimap");
 const minimapCtx = minimapCanvas.getContext("2d");
-const playersLabel = document.getElementById("players-label");
-const mpStatus = document.getElementById("mp-status");
-const playerNameInput = document.getElementById("player-name");
 
-function getWebSocketUrl() {
-  const params = new URLSearchParams(window.location.search);
-  if (params.get("ws")) return params.get("ws");
-  const host = window.location.hostname;
-  if (host === "localhost" || host === "127.0.0.1") {
-    return "ws://localhost:3001";
-  }
-  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${proto}//${host}:3001`;
-}
+const startScreen = document.getElementById("start-screen");
+const hud = document.getElementById("hud");
+const successScreen = document.getElementById("success-screen");
+const gameoverScreen = document.getElementById("gameover-screen");
+const touchControls = document.getElementById("touch-controls");
+const startBtn = document.getElementById("start-btn");
+const restartBtn = document.getElementById("restart-btn");
+const successRestartBtn = document.getElementById("success-restart-btn");
+const speedLabel = document.getElementById("speed-label");
+const headingLabel = document.getElementById("heading-label");
+const rudderLabel = document.getElementById("rudder-label");
+const throttleLabel = document.getElementById("throttle-label");
+const missionLabel = document.getElementById("mission-label");
+const scoreLabel = document.getElementById("score-label");
+const warningLabel = document.getElementById("warning-label");
+const successScore = document.getElementById("success-score");
+const successTime = document.getElementById("success-time");
+const gameoverTitle = document.getElementById("gameover-title");
+const gameoverReason = document.getElementById("gameover-reason");
+const rudderWheel = document.getElementById("rudder-wheel");
+const rudderKnob = document.getElementById("rudder-knob");
+const throttleSlider = document.getElementById("throttle-slider");
+const throttleFill = document.getElementById("throttle-fill");
+const throttleThumb = document.getElementById("throttle-thumb");
 
-const WS_URL = getWebSocketUrl();
+const WORLD_W = 4000;
+const WORLD_H = 3000;
+const MPS_TO_KNOTS = 1.94384;
+const DEG = Math.PI / 180;
+const MAX_DT = 1 / 30;
 
-const WORLD_W = 3200;
-const WORLD_H = 2400;
-const EAT_RATIO = 1.05;
-const TARGET_FISH = 20;
-const MAX_PLAYER_SIZE = 4.5;
-
-const FISH_COLORS = [
-  "#3ecf6e",
-  "#4da3ff",
-  "#f59e42",
-  "#e85d8f",
-  "#a78bfa",
-  "#fbbf24",
-  "#34d399",
-  "#fb7185",
-];
+const SHIP_LENGTH = 130;
+const SHIP_WIDTH = 30;
+const SHIP_MASS = 85000;
+const MAX_THRUST = 420000;
+const MAX_RUDDER = 35 * DEG;
+const RUDDER_RATE = 0.45 * DEG;
+const THROTTLE_RATE = 0.35;
+const BOW_THRUST = 180000;
+const BOW_TORQUE = 80000;
+const DRAG_FWD = 0.018;
+const DRAG_LAT = 0.12;
+const DRAG_ANG = 0.85;
+const RUDDER_COEFF = 2.8e6;
+const DOCK_SPEED_KN = 3;
+const DOCK_ALIGN_DEG = 18;
 
 let width = 0;
 let height = 0;
 let dpr = 1;
 let lastTime = 0;
 let gameState = "start";
-let score = 0;
-let invincibleUntil = 0;
-let bubbles = [];
-let caustics = [];
-let remotePlayers = [];
-let lastNetSend = 0;
+let missionTime = 0;
+let score = 1000;
+let collisionPenalty = 0;
+let wavePhase = 0;
+let wakeParticles = [];
+let camera = { x: 0, y: 0, rot: 0 };
+
+const keys = {};
+const helm = { throttle: 0, rudder: 0, bow: 0 };
+let touchRudder = 0;
+let touchThrottle = 0;
+let touchBow = 0;
+
+const waypoints = [
+  { x: 520, y: 2100, label: "Depart pier" },
+  { x: 900, y: 1750, label: "Enter channel" },
+  { x: 1800, y: 1400, label: "Mid channel" },
+  { x: 2800, y: 1050, label: "Approach dock" },
+  { x: 3400, y: 820, label: "Dock at pier" },
+];
+
+const dockZone = { x: 3280, y: 720, w: 280, h: 200, heading: -25 * DEG };
+
+const landPolygons = [
+  // North mainland
+  [
+    { x: 0, y: 0 },
+    { x: WORLD_W, y: 0 },
+    { x: WORLD_W, y: 480 },
+    { x: 2600, y: 520 },
+    { x: 2200, y: 680 },
+    { x: 1600, y: 720 },
+    { x: 1100, y: 900 },
+    { x: 600, y: 1100 },
+    { x: 200, y: 1400 },
+    { x: 0, y: 1800 },
+  ],
+  // South breakwater
+  [
+    { x: 0, y: WORLD_H },
+    { x: WORLD_W, y: WORLD_H },
+    { x: WORLD_W, y: 2200 },
+    { x: 3000, y: 2150 },
+    { x: 2400, y: 2000 },
+    { x: 1800, y: 1900 },
+    { x: 1200, y: 2050 },
+    { x: 700, y: 2300 },
+    { x: 0, y: 2500 },
+  ],
+  // East pier structure
+  [
+    { x: 3550, y: 600 },
+    { x: WORLD_W, y: 580 },
+    { x: WORLD_W, y: 950 },
+    { x: 3520, y: 920 },
+  ],
+  // West dock wall
+  [
+    { x: 0, y: 1950 },
+    { x: 350, y: 1920 },
+    { x: 420, y: 2280 },
+    { x: 0, y: 2320 },
+  ],
+];
+
+const buoys = [
+  { x: 700, y: 1880, color: "#ff4444" },
+  { x: 1100, y: 1620, color: "#44ff66" },
+  { x: 1500, y: 1380, color: "#ff4444" },
+  { x: 2100, y: 1180, color: "#44ff66" },
+  { x: 2600, y: 980, color: "#ff4444" },
+  { x: 3100, y: 860, color: "#44ff66" },
+];
+
+let ship = null;
+let aiShips = [];
+let currentWaypoint = 0;
 
 function clamp(v, min, max) {
   return Math.max(min, Math.min(max, v));
@@ -73,23 +147,134 @@ function dist(ax, ay, bx, by) {
   return Math.sqrt(dx * dx + dy * dy);
 }
 
-function randomRange(min, max) {
-  return min + Math.random() * (max - min);
+function normalizeAngle(a) {
+  while (a > Math.PI) a -= Math.PI * 2;
+  while (a < -Math.PI) a += Math.PI * 2;
+  return a;
 }
 
-function hexToRgb(hex) {
-  const n = parseInt(hex.slice(1), 16);
-  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+function headingDeg(h) {
+  const d = ((90 - (h * 180) / Math.PI) % 360 + 360) % 360;
+  return Math.round(d);
 }
 
-function shade(hex, amount) {
-  const { r, g, b } = hexToRgb(hex);
-  const mix = amount >= 0 ? 255 : 0;
-  const t = Math.abs(amount);
-  const nr = Math.round(lerp(r, mix, t));
-  const ng = Math.round(lerp(g, mix, t));
-  const nb = Math.round(lerp(b, mix, t));
-  return `rgb(${nr}, ${ng}, ${nb})`;
+function pointInPoly(px, py, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i].x;
+    const yi = poly[i].y;
+    const xj = poly[j].x;
+    const yj = poly[j].y;
+    if (yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function shipCorners(s) {
+  const cos = Math.cos(s.heading);
+  const sin = Math.sin(s.heading);
+  const hl = SHIP_LENGTH * 0.5;
+  const hw = SHIP_WIDTH * 0.5;
+  const local = [
+    { lx: hl, ly: -hw },
+    { lx: hl, ly: hw },
+    { lx: -hl, ly: hw },
+    { lx: -hl, ly: -hw },
+  ];
+  return local.map((p) => ({
+    x: s.x + p.lx * cos - p.ly * sin,
+    y: s.y + p.lx * sin + p.ly * cos,
+  }));
+}
+
+function polyCollision(corners, poly) {
+  for (const c of corners) {
+    if (pointInPoly(c.x, c.y, poly)) return true;
+  }
+  const cx = corners.reduce((s, p) => s + p.x, 0) / corners.length;
+  const cy = corners.reduce((s, p) => s + p.y, 0) / corners.length;
+  if (pointInPoly(cx, cy, poly)) return true;
+  return false;
+}
+
+function shipsCollide(a, b) {
+  const ca = shipCorners(a);
+  const cb = shipCorners(b);
+  const midAx = ca.reduce((s, p) => s + p.x, 0) / 4;
+  const midAy = ca.reduce((s, p) => s + p.y, 0) / 4;
+  const midBx = cb.reduce((s, p) => s + p.x, 0) / 4;
+  const midBy = cb.reduce((s, p) => s + p.y, 0) / 4;
+  return dist(midAx, midAy, midBx, midBy) < (SHIP_LENGTH + SHIP_LENGTH) * 0.45;
+}
+
+function createShip(x, y, heading) {
+  return {
+    x,
+    y,
+    vx: 0,
+    vy: 0,
+    heading,
+    omega: 0,
+    throttle: 0,
+    rudder: 0,
+    bow: 0,
+    isAI: false,
+    pathIndex: 0,
+    path: [],
+    color: "#e8ecef",
+  };
+}
+
+function createAIShips() {
+  return [
+    {
+      ...createShip(2000, 1250, -0.4),
+      isAI: true,
+      color: "#c8a86e",
+      path: [
+        { x: 2000, y: 1250 },
+        { x: 2400, y: 1100 },
+        { x: 2900, y: 950 },
+        { x: 3200, y: 880 },
+      ],
+      pathIndex: 0,
+      throttle: 0.35,
+    },
+    {
+      ...createShip(1400, 1550, 0.6),
+      isAI: true,
+      color: "#8eb4c8",
+      path: [
+        { x: 1400, y: 1550 },
+        { x: 1000, y: 1700 },
+        { x: 650, y: 1950 },
+      ],
+      pathIndex: 0,
+      throttle: 0.28,
+    },
+  ];
+}
+
+function resetGame() {
+  ship = createShip(480, 2180, -Math.PI / 2);
+  ship.throttle = 0;
+  aiShips = createAIShips();
+  currentWaypoint = 0;
+  missionTime = 0;
+  score = 1000;
+  collisionPenalty = 0;
+  wakeParticles = [];
+  helm.throttle = 0;
+  helm.rudder = 0;
+  helm.bow = 0;
+  touchRudder = 0;
+  touchThrottle = 0;
+  touchBow = 0;
+  camera.x = ship.x;
+  camera.y = ship.y;
+  camera.rot = ship.heading;
 }
 
 function resize() {
@@ -101,949 +286,610 @@ function resize() {
   canvas.style.width = `${width}px`;
   canvas.style.height = `${height}px`;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const isMobile = width < 768;
+  touchControls.classList.toggle("hidden", gameState !== "playing" || !isMobile);
 }
 
-class InputManager {
-  constructor() {
-    this.keys = new Set();
-    this.pointerActive = false;
-    this.pointerX = 0;
-    this.pointerY = 0;
-    this.gyroActive = false;
-    this.gyroX = 0;
-    this.gyroY = 0;
-    this.smoothGyroX = 0;
-    this.smoothGyroY = 0;
-    this.betaOffset = null;
-    this.gammaOffset = null;
-    this.motionOffsetX = null;
-    this.motionOffsetY = null;
-    this.useMotion = false;
+function getEffectiveHelm() {
+  let throttle = helm.throttle;
+  let rudder = helm.rudder;
+  let bow = helm.bow;
 
-    window.addEventListener("keydown", (e) => {
-      this.keys.add(e.key.toLowerCase());
-      if (["arrowup", "arrowdown", "arrowleft", "arrowright", " "].includes(e.key.toLowerCase())) {
-        e.preventDefault();
-      }
-    });
-    window.addEventListener("keyup", (e) => this.keys.delete(e.key.toLowerCase()));
-
-    const onPointer = (x, y, active) => {
-      this.pointerX = x;
-      this.pointerY = y;
-      this.pointerActive = active;
-    };
-
-    const bindPointer = (target) => {
-      target.addEventListener("pointerdown", (e) => {
-        if (gameState !== "playing") return;
-        target.setPointerCapture(e.pointerId);
-        onPointer(e.clientX, e.clientY, true);
-      });
-      target.addEventListener("pointermove", (e) => {
-        if (this.pointerActive) onPointer(e.clientX, e.clientY, true);
-      });
-      const endPointer = (e) => {
-        if (target.hasPointerCapture(e.pointerId)) target.releasePointerCapture(e.pointerId);
-        this.pointerActive = false;
-      };
-      target.addEventListener("pointerup", endPointer);
-      target.addEventListener("pointercancel", endPointer);
-    };
-
-    bindPointer(canvas);
-    bindPointer(app);
-
-    window.addEventListener("deviceorientation", (e) => this.onOrientation(e));
-    window.addEventListener("devicemotion", (e) => this.onMotion(e));
+  if (width < 768 && gameState === "playing") {
+    throttle = touchThrottle;
+    rudder = touchRudder;
+    bow = touchBow;
   }
 
-  async requestGyroPermission() {
-    try {
-      if (typeof DeviceOrientationEvent !== "undefined" && typeof DeviceOrientationEvent.requestPermission === "function") {
-        const result = await DeviceOrientationEvent.requestPermission();
-        if (result !== "granted") return false;
-      }
-      if (typeof DeviceMotionEvent !== "undefined" && typeof DeviceMotionEvent.requestPermission === "function") {
-        const result = await DeviceMotionEvent.requestPermission();
-        if (result !== "granted") return false;
-      }
-    } catch (err) {
-      console.warn("Motion permission error:", err);
-      return false;
+  const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+  for (const pad of pads) {
+    if (!pad) continue;
+    const stickX = pad.axes[0] || 0;
+    const rt = pad.buttons[7]?.value ?? 0;
+    const lt = pad.buttons[6]?.value ?? 0;
+    if (Math.abs(stickX) > 0.15) rudder = stickX * MAX_RUDDER;
+    if (rt > 0.1 || lt > 0.1) throttle = rt - lt;
+    break;
+  }
+
+  return { throttle, rudder, bow };
+}
+
+function updateHelmFromKeyboard(dt) {
+  if (keys["w"] || keys["arrowup"]) helm.throttle = clamp(helm.throttle + THROTTLE_RATE * dt, -1, 1);
+  if (keys["s"] || keys["arrowdown"]) helm.throttle = clamp(helm.throttle - THROTTLE_RATE * dt, -1, 1);
+  if (keys["a"] || keys["arrowleft"]) helm.rudder = clamp(helm.rudder - RUDDER_RATE * dt * 60, -MAX_RUDDER, MAX_RUDDER);
+  if (keys["d"] || keys["arrowright"]) helm.rudder = clamp(helm.rudder + RUDDER_RATE * dt * 60, -MAX_RUDDER, MAX_RUDDER);
+  if (keys["q"]) helm.bow = -1;
+  else if (keys["e"]) helm.bow = 1;
+  else if (!touchBow) helm.bow = 0;
+  if (keys[" "]) helm.rudder = lerp(helm.rudder, 0, clamp(dt * 8, 0, 1));
+}
+
+function applyPhysics(s, input, dt) {
+  s.throttle = input.throttle;
+  s.rudder = input.rudder;
+  s.bow = input.bow;
+
+  const cos = Math.cos(s.heading);
+  const sin = Math.sin(s.heading);
+  const fwdSpeed = s.vx * cos + s.vy * sin;
+  const latSpeed = -s.vx * sin + s.vy * cos;
+
+  const thrust = s.throttle * MAX_THRUST;
+  const fx = cos * thrust;
+  const fy = sin * thrust;
+
+  const bowForce = s.bow * BOW_THRUST;
+  const bfx = -sin * bowForce;
+  const bfy = cos * bowForce;
+
+  const windBase = 12000;
+  const gust = Math.sin(wavePhase * 0.7) * 4000;
+  const windX = windBase + gust;
+  const windY = 6000 + Math.cos(wavePhase * 0.5) * 2500;
+  const currentX = 8000;
+  const currentY = 3000;
+
+  const waveDriftX = Math.sin(wavePhase * 1.3 + s.x * 0.002) * 800;
+  const waveDriftY = Math.cos(wavePhase * 1.1 + s.y * 0.002) * 800;
+
+  const dragFx = -fwdSpeed * Math.abs(fwdSpeed) * DRAG_FWD - latSpeed * DRAG_LAT * cos;
+  const dragFy = -fwdSpeed * Math.abs(fwdSpeed) * DRAG_FWD * sin - latSpeed * DRAG_LAT * sin;
+
+  const totalFx = fx + bfx + windX + currentX + waveDriftX + dragFx * (s.isAI ? 0.6 : 1);
+  const totalFy = fy + bfy + windY + currentY + waveDriftY + dragFy * (s.isAI ? 0.6 : 1);
+
+  const ax = totalFx / SHIP_MASS;
+  const ay = totalFy / SHIP_MASS;
+
+  s.vx += ax * dt;
+  s.vy += ay * dt;
+
+  const rudderTorque = s.rudder * fwdSpeed * fwdSpeed * RUDDER_COEFF;
+  const bowTorque = s.bow * BOW_TORQUE;
+  const angDrag = -s.omega * Math.abs(s.omega) * DRAG_ANG - s.omega * 0.5;
+  s.omega += ((rudderTorque + bowTorque) / SHIP_MASS + angDrag) * dt;
+
+  s.x += s.vx * dt;
+  s.y += s.vy * dt;
+  s.heading += s.omega * dt;
+  s.heading = normalizeAngle(s.heading);
+
+  s.x = clamp(s.x, SHIP_LENGTH, WORLD_W - SHIP_LENGTH);
+  s.y = clamp(s.y, SHIP_LENGTH, WORLD_H - SHIP_LENGTH);
+}
+
+function updateAI(s, dt) {
+  if (!s.path.length) return;
+  const target = s.path[s.pathIndex];
+  const dx = target.x - s.x;
+  const dy = target.y - s.y;
+  const desired = Math.atan2(dy, dx);
+  let diff = normalizeAngle(desired - s.heading);
+  s.rudder = clamp(diff * 1.2, -MAX_RUDDER * 0.7, MAX_RUDDER * 0.7);
+  const d = Math.sqrt(dx * dx + dy * dy);
+  if (d < 80 && s.pathIndex < s.path.length - 1) s.pathIndex++;
+  s.throttle = s.throttle || 0.3;
+  applyPhysics(s, { throttle: s.throttle, rudder: s.rudder, bow: 0 }, dt);
+}
+
+function checkCollisions() {
+  const corners = shipCorners(ship);
+  for (const poly of landPolygons) {
+    if (polyCollision(corners, poly)) {
+      return { type: "ground", message: "Your vessel struck land." };
     }
-    this.gyroActive = true;
-    this.betaOffset = null;
-    this.gammaOffset = null;
-    this.motionOffsetX = null;
-    this.motionOffsetY = null;
+  }
+  for (const ai of aiShips) {
+    if (shipsCollide(ship, ai)) {
+      return { type: "collision", message: "Collision with another vessel." };
+    }
+  }
+  return null;
+}
+
+function checkWaypoint() {
+  const wp = waypoints[currentWaypoint];
+  if (!wp) return;
+  const d = dist(ship.x, ship.y, wp.x, wp.y);
+  if (d < 120) {
+    if (currentWaypoint < waypoints.length - 1) {
+      currentWaypoint++;
+      score += 50;
+    }
+  }
+}
+
+function checkDocking() {
+  if (currentWaypoint < waypoints.length - 1) return false;
+  const cx = dockZone.x + dockZone.w / 2;
+  const cy = dockZone.y + dockZone.h / 2;
+  const inZone =
+    ship.x > dockZone.x &&
+    ship.x < dockZone.x + dockZone.w &&
+    ship.y > dockZone.y &&
+    ship.y < dockZone.y + dockZone.h;
+  if (!inZone) return false;
+
+  const speed = Math.sqrt(ship.vx * ship.vx + ship.vy * ship.vy) * MPS_TO_KNOTS;
+  const align = Math.abs(normalizeAngle(ship.heading - dockZone.heading));
+  if (speed < DOCK_SPEED_KN && align < DOCK_ALIGN_DEG * DEG) {
     return true;
   }
-
-  onOrientation(e) {
-    if (e.beta == null || e.gamma == null) return;
-    if (this.betaOffset == null) {
-      this.betaOffset = e.beta;
-      this.gammaOffset = e.gamma;
-    }
-    const beta = clamp(e.beta - this.betaOffset, -40, 40);
-    const gamma = clamp(e.gamma - this.gammaOffset, -40, 40);
-    this.gyroX = gamma / 40;
-    this.gyroY = beta / 40;
-    this.gyroActive = true;
-    this.useMotion = false;
-  }
-
-  onMotion(e) {
-    const accel = e.accelerationIncludingGravity;
-    if (!accel || accel.x == null || accel.y == null) return;
-    if (this.motionOffsetX == null) {
-      this.motionOffsetX = accel.x;
-      this.motionOffsetY = accel.y;
-    }
-    const tiltX = clamp(accel.x - this.motionOffsetX, -5, 5);
-    const tiltY = clamp(accel.y - this.motionOffsetY, -5, 5);
-    this.gyroX = tiltX / 5;
-    this.gyroY = tiltY / 5;
-    this.gyroActive = true;
-    this.useMotion = true;
-  }
-
-  getSteering() {
-    let sx = 0;
-    let sy = 0;
-
-    if (this.gyroActive) {
-      this.smoothGyroX = lerp(this.smoothGyroX, this.gyroX, this.useMotion ? 0.18 : 0.14);
-      this.smoothGyroY = lerp(this.smoothGyroY, this.gyroY, this.useMotion ? 0.18 : 0.14);
-      sx += this.smoothGyroX;
-      sy += this.smoothGyroY;
-    }
-
-    if (this.keys.has("arrowleft") || this.keys.has("a")) sx -= 1;
-    if (this.keys.has("arrowright") || this.keys.has("d")) sx += 1;
-    if (this.keys.has("arrowup") || this.keys.has("w")) sy -= 1;
-    if (this.keys.has("arrowdown") || this.keys.has("s")) sy += 1;
-
-    if (this.pointerActive) {
-      const cx = width / 2;
-      const cy = height / 2;
-      const dx = this.pointerX - cx;
-      const dy = this.pointerY - cy;
-      const len = Math.sqrt(dx * dx + dy * dy) || 1;
-      const minDist = 18;
-      const strength = len < minDist ? 0.35 : clamp(len / (Math.min(width, height) * 0.4), 0.35, 1);
-      sx += (dx / len) * strength;
-      sy += (dy / len) * strength;
-    }
-
-    const mag = Math.sqrt(sx * sx + sy * sy);
-    if (mag > 1) {
-      sx /= mag;
-      sy /= mag;
-    }
-    return { x: sx, y: sy };
-  }
+  return false;
 }
 
-class Fish {
-  constructor({ x, y, size, color, isPlayer = false }) {
-    this.x = x;
-    this.y = y;
-    this.size = size;
-    this.color = color;
-    this.isPlayer = isPlayer;
-    this.vx = 0;
-    this.vy = 0;
-    this.heading = randomRange(0, Math.PI * 2);
-    this.wanderAngle = randomRange(0, Math.PI * 2);
-    this.wiggle = randomRange(0, Math.PI * 2);
-    this.isRemote = false;
-    this.remoteId = null;
-    this.name = "";
-    this.alive = true;
-    this.targetX = x;
-    this.targetY = y;
-    this.targetHeading = this.heading;
-    this.targetSize = size;
+function updateWake(dt) {
+  const speed = Math.sqrt(ship.vx * ship.vx + ship.vy * ship.vy);
+  if (speed > 2) {
+    const cos = Math.cos(ship.heading);
+    const sin = Math.sin(ship.heading);
+    wakeParticles.push({
+      x: ship.x - cos * SHIP_LENGTH * 0.45,
+      y: ship.y - sin * SHIP_LENGTH * 0.45,
+      life: 1,
+      size: 4 + speed * 0.08,
+    });
   }
-
-  get radius() {
-    return 14 * this.size;
-  }
-
-  getSpeed() {
-    if (this.isPlayer) return isPlayerSpeed(this);
-    return this.maxSpeedOverride ?? aiMaxSpeed(this.size);
-  }
-
-  update(dt, input, player, allFish) {
-    if (this.isRemote) {
-      this.x = lerp(this.x, this.targetX, 0.22);
-      this.y = lerp(this.y, this.targetY, 0.22);
-      this.size = lerp(this.size, this.targetSize, 0.15);
-      this.heading = lerp(this.heading, this.targetHeading, 0.18);
-      this.wiggle += dt * 6;
-      return;
-    }
-    if (this.isPlayer) {
-      this.updatePlayer(dt, input);
-    } else {
-      this.updateAI(dt, player, allFish);
-    }
-    this.applyBounds();
-    this.wiggle += dt * 6;
-  }
-
-  updatePlayer(dt, input) {
-    const steer = input.getSteering();
-    const accel = 220;
-    const maxSpd = this.getSpeed();
-
-    this.vx += steer.x * accel * dt;
-    this.vy += steer.y * accel * dt;
-
-    const friction = 0.96;
-    this.vx *= friction;
-    this.vy *= friction;
-
-    const spd = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
-    if (spd > maxSpd) {
-      this.vx = (this.vx / spd) * maxSpd;
-      this.vy = (this.vy / spd) * maxSpd;
-    }
-
-    if (spd > 8) {
-      this.heading = Math.atan2(this.vy, this.vx);
-    }
-
-    this.x += this.vx * dt;
-    this.y += this.vy * dt;
-  }
-
-  updateAI(dt, player, allFish) {
-    const wanderForce = 40;
-    this.wanderAngle += randomRange(-1.2, 1.2) * dt;
-
-    let ax = Math.cos(this.wanderAngle) * wanderForce;
-    let ay = Math.sin(this.wanderAngle) * wanderForce;
-
-    if (player) {
-      const d = dist(this.x, this.y, player.x, player.y);
-      if (player.size > this.size * EAT_RATIO && d < 220) {
-        const fleeX = this.x - player.x;
-        const fleeY = this.y - player.y;
-        const fleeLen = Math.sqrt(fleeX * fleeX + fleeY * fleeY) || 1;
-        const fleeStrength = (220 - d) / 220;
-        ax += (fleeX / fleeLen) * 180 * fleeStrength;
-        ay += (fleeY / fleeLen) * 180 * fleeStrength;
-      } else if (this.size > player.size * EAT_RATIO && d < 160 && d > 30) {
-        const chaseX = player.x - this.x;
-        const chaseY = player.y - this.y;
-        const chaseLen = Math.sqrt(chaseX * chaseX + chaseY * chaseY) || 1;
-        ax += (chaseX / chaseLen) * 90;
-        ay += (chaseY / chaseLen) * 90;
-      }
-    }
-
-    for (const other of allFish) {
-      if (other === this) continue;
-      const d = dist(this.x, this.y, other.x, other.y);
-      const minSep = this.radius + other.radius;
-      if (d < minSep && d > 0) {
-        const pushX = (this.x - other.x) / d;
-        const pushY = (this.y - other.y) / d;
-        const push = (minSep - d) / minSep;
-        ax += pushX * 120 * push;
-        ay += pushY * 120 * push;
-      }
-    }
-
-    this.vx += ax * dt;
-    this.vy += ay * dt;
-
-    const friction = 0.96;
-    this.vx *= friction;
-    this.vy *= friction;
-
-    const maxSpd = this.getSpeed();
-    const spd = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
-    if (spd > maxSpd) {
-      this.vx = (this.vx / spd) * maxSpd;
-      this.vy = (this.vy / spd) * maxSpd;
-    } else if (spd < maxSpd * 0.35) {
-      this.vx += Math.cos(this.wanderAngle) * maxSpd * 0.4 * dt;
-      this.vy += Math.sin(this.wanderAngle) * maxSpd * 0.4 * dt;
-    }
-
-    if (spd > 5) {
-      this.heading = Math.atan2(this.vy, this.vx);
-    }
-
-    this.x += this.vx * dt;
-    this.y += this.vy * dt;
-  }
-
-  applyBounds() {
-    const pad = this.radius;
-    if (this.x < pad) {
-      this.x = pad;
-      this.vx = Math.abs(this.vx) * 0.5;
-    }
-    if (this.x > WORLD_W - pad) {
-      this.x = WORLD_W - pad;
-      this.vx = -Math.abs(this.vx) * 0.5;
-    }
-    if (this.y < pad) {
-      this.y = pad;
-      this.vy = Math.abs(this.vy) * 0.5;
-    }
-    if (this.y > WORLD_H - pad) {
-      this.y = WORLD_H - pad;
-      this.vy = -Math.abs(this.vy) * 0.5;
-    }
-  }
-
-  overlaps(other) {
-    const d = dist(this.x, this.y, other.x, other.y);
-    return d < this.radius + other.radius * 0.85;
-  }
-
-  canEat(other) {
-    return this.size > other.size * EAT_RATIO;
-  }
-
-  draw(ctx, camX, camY) {
-    const sx = this.x - camX + width / 2;
-    const sy = this.y - camY + height / 2;
-
-    if (sx < -80 || sx > width + 80 || sy < -80 || sy > height + 80) return;
-
-    const r = this.radius;
-    const tailWag = Math.sin(this.wiggle) * 0.15;
-
-    ctx.save();
-    ctx.translate(sx, sy);
-    ctx.rotate(this.heading);
-
-    const bodyLen = r * 2.1;
-    const bodyH = r * 0.9;
-
-    ctx.fillStyle = shade(this.color, -0.3);
-    ctx.beginPath();
-    ctx.moveTo(-bodyLen * 0.55, 0);
-    ctx.lineTo(-bodyLen * 0.85, -bodyH * 0.7 + tailWag * r);
-    ctx.lineTo(-bodyLen, 0);
-    ctx.lineTo(-bodyLen * 0.85, bodyH * 0.7 - tailWag * r);
-    ctx.closePath();
-    ctx.fill();
-
-    const grad = ctx.createLinearGradient(-r, 0, r, 0);
-    grad.addColorStop(0, shade(this.color, -0.2));
-    grad.addColorStop(0.5, this.color);
-    grad.addColorStop(1, shade(this.color, 0.2));
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.ellipse(0, 0, bodyLen * 0.55, bodyH, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.fillStyle = shade(this.color, 0.35);
-    ctx.beginPath();
-    ctx.ellipse(r * 0.1, bodyH * 0.25, bodyLen * 0.35, bodyH * 0.35, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.fillStyle = "#fff";
-    ctx.beginPath();
-    ctx.arc(bodyLen * 0.28, -bodyH * 0.18, r * 0.18, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.fillStyle = "#0a1628";
-    ctx.beginPath();
-    ctx.arc(bodyLen * 0.32, -bodyH * 0.18, r * 0.09, 0, Math.PI * 2);
-    ctx.fill();
-
-    if (this.isPlayer) {
-      const invincible = performance.now() < invincibleUntil;
-      ctx.strokeStyle = invincible ? "rgba(94, 234, 212, 0.75)" : "rgba(255, 255, 255, 0.35)";
-      ctx.lineWidth = invincible ? 3 : 2;
-      ctx.beginPath();
-      ctx.ellipse(0, 0, bodyLen * 0.58, bodyH * 1.05, 0, 0, Math.PI * 2);
-      ctx.stroke();
-    } else if (this.isRemote && this.name) {
-      ctx.fillStyle = "rgba(255, 255, 255, 0.85)";
-      ctx.font = `${Math.max(9, r * 0.45)}px system-ui, sans-serif`;
-      ctx.textAlign = "center";
-      ctx.fillText(this.name, 0, -bodyH - 6);
-    }
-
-    ctx.restore();
-  }
-}
-
-function isPlayerSpeed(fish) {
-  return lerp(90, 130, clamp((fish.size - 1) / (MAX_PLAYER_SIZE - 1), 0, 1));
-}
-
-function aiMaxSpeed(size) {
-  return lerp(55, 100, clamp(size / 3, 0, 1));
-}
-
-function pickFishColor() {
-  return FISH_COLORS[Math.floor(Math.random() * FISH_COLORS.length)];
-}
-
-function randomWorldPoint(margin = 80) {
-  return {
-    x: randomRange(margin, WORLD_W - margin),
-    y: randomRange(margin, WORLD_H - margin),
-  };
-}
-
-function spawnPointOffscreen(camX, camY, margin = 120, minSize = 0, maxSize = Infinity) {
-  const side = Math.floor(Math.random() * 4);
-  const viewPad = 80;
-  let x;
-  let y;
-  if (side === 0) {
-    x = camX - width / 2 - margin;
-    y = randomRange(camY - height / 2 - viewPad, camY + height / 2 + viewPad);
-  } else if (side === 1) {
-    x = camX + width / 2 + margin;
-    y = randomRange(camY - height / 2 - viewPad, camY + height / 2 + viewPad);
-  } else if (side === 2) {
-    x = randomRange(camX - width / 2 - viewPad, camX + width / 2 + viewPad);
-    y = camY - height / 2 - margin;
-  } else {
-    x = randomRange(camX - width / 2 - viewPad, camX + width / 2 + viewPad);
-    y = camY + height / 2 + margin;
-  }
-  return {
-    x: clamp(x, 60, WORLD_W - 60),
-    y: clamp(y, 60, WORLD_H - 60),
-    size: clamp(randomFishSize(), minSize, maxSize),
-  };
-}
-
-function randomFishSize() {
-  const roll = Math.random();
-  if (roll < 0.45) return randomRange(0.5, 0.9);
-  if (roll < 0.8) return randomRange(0.9, 1.5);
-  if (roll < 0.95) return randomRange(1.5, 2.4);
-  return randomRange(2.4, 3.5);
-}
-
-function createAIFish(camX, camY, sizeOverride, options = {}) {
-  const { margin = 120, minSize = 0, maxSize = Infinity } = options;
-  const spawn = spawnPointOffscreen(camX, camY, margin, minSize, maxSize);
-  const size = sizeOverride ?? spawn.size;
-  const fish = new Fish({
-    x: spawn.x,
-    y: spawn.y,
-    size,
-    color: pickFishColor(),
-    isPlayer: false,
+  wakeParticles = wakeParticles.filter((p) => {
+    p.life -= dt * 0.5;
+    p.size += dt * 2;
+    return p.life > 0;
   });
-  fish.maxSpeedOverride = aiMaxSpeed(size);
-  return fish;
+  if (wakeParticles.length > 200) wakeParticles.splice(0, wakeParticles.length - 200);
 }
 
-const input = new InputManager();
-let player = null;
-let aiFish = [];
-
-class MultiplayerClient {
-  constructor() {
-    this.ws = null;
-    this.id = null;
-    this.connected = false;
-    this.playerCount = 1;
-    this.reconnectDelay = 1500;
-  }
-
-  connect() {
-    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
-      return;
-    }
-
-    try {
-      this.ws = new WebSocket(WS_URL);
-    } catch (err) {
-      this.setStatus("Multiplayer offline (solo mode)");
-      return;
-    }
-
-    this.setStatus("Connecting to server...");
-
-    this.ws.addEventListener("open", () => {
-      this.connected = true;
-      this.setStatus("Multiplayer connected");
-    });
-
-    this.ws.addEventListener("message", (event) => {
-      let msg;
-      try {
-        msg = JSON.parse(event.data);
-      } catch {
-        return;
-      }
-      this.handleMessage(msg);
-    });
-
-    this.ws.addEventListener("close", () => {
-      this.connected = false;
-      this.id = null;
-      remotePlayers = [];
-      this.playerCount = 1;
-      updateHUD();
-      this.setStatus("Multiplayer offline (solo mode)");
-      setTimeout(() => this.connect(), this.reconnectDelay);
-    });
-
-    this.ws.addEventListener("error", () => {
-      this.setStatus("Multiplayer offline (solo mode)");
-    });
-  }
-
-  setStatus(text) {
-    if (mpStatus) mpStatus.textContent = text;
-  }
-
-  handleMessage(msg) {
-    if (msg.type === "welcome") {
-      this.id = msg.id;
-      this.syncPlayers(msg.players || []);
-      return;
-    }
-    if (msg.type === "players") {
-      this.syncPlayers(msg.players || []);
-      return;
-    }
-    if (msg.type === "playerEaten") {
-      if (msg.targetId === this.id && gameState === "playing") {
-        finalScoreLabel.textContent = `Score: ${score}`;
-        setState("gameover");
-      }
-      if (msg.eater && msg.eater.id === this.id && player) {
-        player.size = clamp(msg.eater.size, 1, MAX_PLAYER_SIZE);
-        score = msg.eater.score;
-        updateHUD();
-      }
-      if (msg.players) {
-        this.syncPlayers(msg.players);
-      } else {
-        remotePlayers = remotePlayers.filter((f) => f.remoteId !== msg.targetId);
-      }
-    }
-  }
-
-  syncPlayers(list) {
-    const alive = list.filter((p) => p.id !== this.id && p.alive);
-    this.playerCount = list.filter((p) => p.alive).length;
-
-    const existing = new Map(remotePlayers.map((f) => [f.remoteId, f]));
-    remotePlayers = alive.map((data) => {
-      let fish = existing.get(data.id);
-      if (!fish) {
-        fish = new Fish({
-          x: data.x,
-          y: data.y,
-          size: data.size,
-          color: data.color,
-          isPlayer: false,
-        });
-        fish.isRemote = true;
-        fish.remoteId = data.id;
-        fish.name = data.name || "";
-      }
-      fish.targetX = data.x;
-      fish.targetY = data.y;
-      fish.targetSize = data.size;
-      fish.targetHeading = data.heading || 0;
-      fish.color = data.color;
-      fish.name = data.name || fish.name;
-      fish.alive = true;
-      return fish;
-    });
-    updateHUD();
-  }
-
-  send(type, payload = {}) {
-    if (!this.connected || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-    this.ws.send(JSON.stringify({ type, ...payload }));
-  }
-
-  sendPlayerUpdate(now) {
-    if (!player || gameState !== "playing" || now - lastNetSend < 80) return;
-    lastNetSend = now;
-    this.send("update", {
-      state: {
-        x: player.x,
-        y: player.y,
-        size: player.size,
-        heading: player.heading,
-        score,
-        name: getPlayerName(),
-      },
-    });
-  }
-
-  notifyDeath() {
-    this.send("died");
-  }
-
-  notifyRespawn() {
-    if (!player) return;
-    this.send("respawn", {
-      state: { x: player.x, y: player.y },
-    });
-    this.send("update", {
-      state: {
-        x: player.x,
-        y: player.y,
-        size: player.size,
-        heading: player.heading,
-        score,
-        name: getPlayerName(),
-      },
-    });
-  }
-
-  tryEatPlayer(targetId) {
-    this.send("eatPlayer", { targetId });
-  }
-}
-
-const multiplayer = new MultiplayerClient();
-
-function getPlayerName() {
-  const name = playerNameInput?.value?.trim();
-  return name || "Fish";
-}
-
-function drawMinimap(camX, camY) {
-  const size = 112;
-  const radius = 46;
-  const cx = size / 2;
-  const cy = size / 2;
-  const scale = (radius * 1.85) / Math.max(WORLD_W, WORLD_H);
-
-  minimapCtx.clearRect(0, 0, size, size);
-
-  minimapCtx.save();
-  minimapCtx.beginPath();
-  minimapCtx.arc(cx, cy, radius, 0, Math.PI * 2);
-  minimapCtx.clip();
-
-  const ocean = minimapCtx.createRadialGradient(cx, cy, 4, cx, cy, radius);
-  ocean.addColorStop(0, "#134e7a");
-  ocean.addColorStop(1, "#071521");
-  minimapCtx.fillStyle = ocean;
-  minimapCtx.fillRect(0, 0, size, size);
-
-  const worldLeft = cx - (WORLD_W / 2) * scale;
-  const worldTop = cy - (WORLD_H / 2) * scale;
-  minimapCtx.strokeStyle = "rgba(140, 200, 240, 0.35)";
-  minimapCtx.lineWidth = 1.5;
-  minimapCtx.strokeRect(worldLeft, worldTop, WORLD_W * scale, WORLD_H * scale);
-
-  const drawDot = (wx, wy, dotRadius, color, alpha = 1) => {
-    const mx = cx + (wx - WORLD_W / 2) * scale;
-    const my = cy + (wy - WORLD_H / 2) * scale;
-    minimapCtx.globalAlpha = alpha;
-    minimapCtx.fillStyle = color;
-    minimapCtx.beginPath();
-    minimapCtx.arc(mx, my, dotRadius, 0, Math.PI * 2);
-    minimapCtx.fill();
-    minimapCtx.globalAlpha = 1;
-  };
-
-  aiFish.forEach((fish) => {
-    drawDot(fish.x, fish.y, Math.max(1.2, fish.size * 1.1), fish.color, 0.55);
-  });
-
-  remotePlayers.forEach((fish) => {
-    drawDot(fish.x, fish.y, Math.max(2, fish.size * 1.6), fish.color, 0.95);
-  });
-
-  if (player) {
-    drawDot(player.x, player.y, Math.max(2.4, player.size * 1.8), "#5eead4", 1);
-  }
-
-  const viewW = width * scale;
-  const viewH = height * scale;
-  const viewX = cx + (camX - WORLD_W / 2) * scale - viewW / 2;
-  const viewY = cy + (camY - WORLD_H / 2) * scale - viewH / 2;
-  minimapCtx.strokeStyle = "rgba(255, 255, 255, 0.7)";
-  minimapCtx.lineWidth = 1.25;
-  minimapCtx.strokeRect(viewX, viewY, viewW, viewH);
-
-  minimapCtx.restore();
-
-  minimapCtx.strokeStyle = "rgba(180, 230, 255, 0.85)";
-  minimapCtx.lineWidth = 2;
-  minimapCtx.beginPath();
-  minimapCtx.arc(cx, cy, radius, 0, Math.PI * 2);
-  minimapCtx.stroke();
-}
-
-function initBubbles() {
-  bubbles = [];
-  const count = width < 768 ? 28 : 44;
-  for (let i = 0; i < count; i += 1) {
-    bubbles.push({
-      x: randomRange(0, WORLD_W),
-      y: randomRange(0, WORLD_H),
-      r: randomRange(1.5, 5),
-      speed: randomRange(12, 28),
-      wobble: randomRange(0, Math.PI * 2),
-      alpha: randomRange(0.04, 0.14),
-    });
-  }
-}
-
-function initCaustics() {
-  caustics = [];
-  for (let i = 0; i < 5; i += 1) {
-    caustics.push({ offset: randomRange(0, Math.PI * 2), speed: randomRange(0.2, 0.5) });
-  }
-}
-
-function resetGame() {
-  score = 0;
-  invincibleUntil = performance.now() + 3000;
-  const start = randomWorldPoint(200);
-  player = new Fish({
-    x: start.x,
-    y: start.y,
-    size: 1,
-    color: "#3ecf6e",
-    isPlayer: true,
-  });
-  aiFish = [];
-  for (let i = 0; i < 12; i += 1) {
-    aiFish.push(createAIFish(player.x, player.y, randomRange(0.45, 0.85)));
-  }
-  for (let i = 0; i < 8; i += 1) {
-    aiFish.push(createAIFish(player.x, player.y, undefined, { margin: 220, maxSize: 1.4 }));
-  }
-  updateHUD();
+function updateCamera(dt) {
+  const lookX = ship.x + ship.vx * 0.8;
+  const lookY = ship.y + ship.vy * 0.8;
+  camera.x = lerp(camera.x, lookX, clamp(dt * 3, 0, 1));
+  camera.y = lerp(camera.y, lookY, clamp(dt * 3, 0, 1));
+  camera.rot = lerp(camera.rot, ship.heading, clamp(dt * 4, 0, 1));
 }
 
 function updateHUD() {
-  scoreLabel.textContent = `Score: ${score}`;
-  sizeLabel.textContent = `Size: ${player.size.toFixed(1)}`;
-  playersLabel.textContent = `Players: ${multiplayer.playerCount}`;
-}
+  const speed = Math.sqrt(ship.vx * ship.vx + ship.vy * ship.vy) * MPS_TO_KNOTS;
+  const h = getEffectiveHelm();
+  speedLabel.textContent = `${speed.toFixed(1)} kn`;
+  headingLabel.textContent = `${String(headingDeg(ship.heading)).padStart(3, "0")}°`;
+  rudderLabel.textContent = `${Math.round((h.rudder / MAX_RUDDER) * 35)}°`;
+  throttleLabel.textContent = `${Math.round(h.throttle * 100)}%`;
+  const wp = waypoints[currentWaypoint];
+  missionLabel.textContent = `Mission: ${wp ? wp.label : "Complete"}`;
+  scoreLabel.textContent = `Score: ${Math.max(0, Math.round(score - collisionPenalty))}`;
 
-function showOverlay(overlay) {
-  [startScreen, hud, gameoverScreen].forEach((el) => {
-    const show = el === overlay;
-    el.classList.toggle("hidden", !show);
-    el.setAttribute("aria-hidden", show ? "false" : "true");
-  });
-}
-
-function setState(state) {
-  gameState = state;
-  if (state === "start") {
-    showOverlay(startScreen);
-    minimapCanvas.classList.add("hidden");
-  } else if (state === "playing") {
-    showOverlay(hud);
-    minimapCanvas.classList.remove("hidden");
-  } else if (state === "gameover") {
-    showOverlay(gameoverScreen);
-    minimapCanvas.classList.add("hidden");
-    multiplayer.notifyDeath();
-  }
-}
-
-function maintainPopulation(camX, camY) {
-  const despawnDist = Math.max(width, height) * 0.9;
-  aiFish = aiFish.filter((f) => dist(f.x, f.y, camX, camY) < despawnDist + 200);
-
-  while (aiFish.length < TARGET_FISH) {
-    const far = aiFish.length > 14;
-    aiFish.push(
-      createAIFish(camX, camY, undefined, {
-        margin: far ? 220 : 140,
-        maxSize: far ? 3.5 : 1.8,
-      }),
-    );
-  }
-}
-
-function handleCollisions(now) {
-  const invincible = now < invincibleUntil;
-  for (let i = aiFish.length - 1; i >= 0; i -= 1) {
-    const fish = aiFish[i];
-    if (!player.overlaps(fish)) continue;
-
-    if (player.canEat(fish)) {
-      score += 1;
-      player.size = clamp(player.size + fish.size * 0.08, 1, MAX_PLAYER_SIZE);
-      aiFish.splice(i, 1);
-      aiFish.push(createAIFish(player.x, player.y, randomRange(0.5, Math.min(player.size * 0.85, 2.5))));
-      updateHUD();
-    } else if (!invincible && fish.canEat(player)) {
-      finalScoreLabel.textContent = `Score: ${score}`;
-      setState("gameover");
-      return;
+  let warn = false;
+  const corners = shipCorners(ship);
+  for (const poly of landPolygons) {
+    for (const c of corners) {
+      for (const p of poly) {
+        if (dist(c.x, c.y, p.x, p.y) < 100) warn = true;
+      }
     }
   }
-
-  for (const remote of remotePlayers) {
-    if (!remote.alive) continue;
-    if (!player.overlaps(remote)) continue;
-
-    if (player.canEat(remote)) {
-      multiplayer.tryEatPlayer(remote.remoteId);
-      score += 2;
-      player.size = clamp(player.size + remote.size * 0.12, 1, MAX_PLAYER_SIZE);
-      remote.alive = false;
-      updateHUD();
-    } else if (!invincible && remote.canEat(player)) {
-      finalScoreLabel.textContent = `Score: ${score}`;
-      setState("gameover");
-      return;
-    }
+  for (const ai of aiShips) {
+    if (dist(ship.x, ship.y, ai.x, ai.y) < SHIP_LENGTH * 1.5) warn = true;
   }
+  warningLabel.classList.toggle("hidden", !warn);
 }
 
-function drawBackground(time, camX, camY) {
-  const g = ctx.createLinearGradient(0, 0, 0, height);
-  g.addColorStop(0, "#103a5e");
-  g.addColorStop(0.55, "#0a2238");
-  g.addColorStop(1, "#050d14");
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, width, height);
+function drawOcean() {
+  const grad = ctx.createLinearGradient(0, -height, 0, height);
+  grad.addColorStop(0, "#0c2848");
+  grad.addColorStop(0.5, "#0e3a5c");
+  grad.addColorStop(1, "#082038");
+  ctx.fillStyle = grad;
+  ctx.fillRect(-width, -height, width * 2, height * 2);
 
-  ctx.save();
-  ctx.globalAlpha = 0.07;
-  ctx.fillStyle = "#9fdfff";
-  caustics.forEach((c, i) => {
-    const y = height * (0.12 + i * 0.15) + Math.sin(time * c.speed + c.offset) * 10;
+  ctx.globalAlpha = 0.15;
+  for (let i = 0; i < 8; i++) {
+    const wy = Math.sin(wavePhase + i * 0.8) * 30;
+    ctx.strokeStyle = "#5ecfff";
+    ctx.lineWidth = 2;
     ctx.beginPath();
-    for (let x = 0; x <= width; x += 30) {
-      const wave = Math.sin(x * 0.012 + time * 0.7 + c.offset) * 16;
-      if (x === 0) ctx.moveTo(x, y + wave);
-      else ctx.lineTo(x, y + wave);
+    for (let x = -width; x < width; x += 40) {
+      const wx = x + Math.sin(wavePhase * 2 + x * 0.01 + i) * 12;
+      const y = wy + i * 35 + Math.sin(x * 0.008 + wavePhase + i) * 8;
+      if (x === -width) ctx.moveTo(wx, y);
+      else ctx.lineTo(wx, y);
     }
-    ctx.lineTo(width, height);
-    ctx.lineTo(0, height);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawLand() {
+  for (const poly of landPolygons) {
+    ctx.fillStyle = "#2a4a32";
+    ctx.strokeStyle = "#4a7a52";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    poly.forEach((p, i) => {
+      if (i === 0) ctx.moveTo(p.x, p.y);
+      else ctx.lineTo(p.x, p.y);
+    });
     ctx.closePath();
     ctx.fill();
-  });
-  ctx.restore();
+    ctx.stroke();
+  }
 
-  bubbles.forEach((b) => {
-    b.y -= b.speed * 0.016;
-    b.x += Math.sin(time * 0.75 + b.wobble) * 0.4;
-    if (b.y < 0) {
-      b.y = WORLD_H;
-      b.x = randomRange(0, WORLD_W);
-    }
+  ctx.fillStyle = "#5a6a78";
+  ctx.fillRect(dockZone.x, dockZone.y, dockZone.w, dockZone.h);
+  ctx.strokeStyle = "#8aa0b0";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(dockZone.x, dockZone.y, dockZone.w, dockZone.h);
+  ctx.fillStyle = "rgba(100,200,255,0.2)";
+  ctx.font = "14px system-ui";
+  ctx.textAlign = "center";
+  ctx.fillText("DOCK", dockZone.x + dockZone.w / 2, dockZone.y + dockZone.h / 2);
+}
 
-    const sx = b.x - camX + width / 2;
-    const sy = b.y - camY + height / 2;
-    if (sx < -20 || sx > width + 20 || sy < -20 || sy > height + 20) return;
-
-    ctx.fillStyle = `rgba(220, 245, 255, ${b.alpha})`;
+function drawBuoys() {
+  for (const b of buoys) {
+    ctx.fillStyle = b.color;
     ctx.beginPath();
-    ctx.arc(sx, sy, b.r, 0, Math.PI * 2);
+    ctx.arc(b.x, b.y, 10, 0, Math.PI * 2);
     ctx.fill();
-  });
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = "rgba(255,255,255,0.3)";
+    ctx.beginPath();
+    ctx.arc(b.x, b.y - 14, 5, 0, Math.PI * 2);
+    ctx.fill();
+  }
 }
 
-function drawWorldBounds(camX, camY) {
-  const left = 0 - camX + width / 2;
-  const top = 0 - camY + height / 2;
-  ctx.strokeStyle = "rgba(140, 200, 240, 0.12)";
-  ctx.lineWidth = 3;
-  ctx.strokeRect(left, top, WORLD_W, WORLD_H);
-}
-
-function animate(now) {
-  const dt = Math.min((now - lastTime) / 1000, 0.05);
-  lastTime = now;
-  const time = now / 1000;
-
-  if (gameState === "playing" && player) {
-    player.update(dt, input, player, aiFish);
-    aiFish.forEach((f) => f.update(dt, input, player, aiFish));
-
-    const camX = clamp(player.x, width / 2, WORLD_W - width / 2);
-    const camY = clamp(player.y, height / 2, WORLD_H - height / 2);
-
-    handleCollisions(now);
-    if (gameState === "playing") {
-      maintainPopulation(camX, camY);
+function drawWaypoints() {
+  for (let i = 0; i < waypoints.length; i++) {
+    const wp = waypoints[i];
+    const active = i === currentWaypoint;
+    ctx.strokeStyle = active ? "#6ecfff" : "rgba(110,207,255,0.35)";
+    ctx.lineWidth = active ? 3 : 1.5;
+    ctx.setLineDash(active ? [] : [8, 8]);
+    ctx.beginPath();
+    ctx.arc(wp.x, wp.y, active ? 28 : 18, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    if (active) {
+      ctx.fillStyle = "rgba(110,207,255,0.25)";
+      ctx.fill();
     }
+  }
+  if (currentWaypoint > 0) {
+    const prev = waypoints[currentWaypoint - 1];
+    const curr = waypoints[currentWaypoint];
+    if (prev && curr) {
+      ctx.strokeStyle = "rgba(110,207,255,0.2)";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([12, 8]);
+      ctx.beginPath();
+      ctx.moveTo(prev.x, prev.y);
+      ctx.lineTo(curr.x, curr.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+}
 
-    drawBackground(time, camX, camY);
-    drawWorldBounds(camX, camY);
+function drawWake() {
+  for (const p of wakeParticles) {
+    ctx.fillStyle = `rgba(180, 220, 255, ${p.life * 0.35})`;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
 
-    const sorted = [...aiFish].sort((a, b) => a.size - b.size);
-    sorted.forEach((f) => f.draw(ctx, camX, camY));
-    remotePlayers.forEach((f) => {
-      f.update(dt, input, player, aiFish);
-      f.draw(ctx, camX, camY);
+function drawShip(s, isPlayer) {
+  ctx.save();
+  ctx.translate(s.x, s.y);
+  ctx.rotate(s.heading);
+
+  const len = SHIP_LENGTH;
+  const hw = SHIP_WIDTH * 0.5;
+
+  ctx.fillStyle = isPlayer ? "#f0f4f8" : s.color;
+  ctx.strokeStyle = isPlayer ? "#8899aa" : "#666";
+  ctx.lineWidth = 2;
+
+  ctx.beginPath();
+  ctx.moveTo(len * 0.5, 0);
+  ctx.lineTo(len * 0.15, -hw);
+  ctx.lineTo(-len * 0.42, -hw);
+  ctx.lineTo(-len * 0.48, -hw * 0.6);
+  ctx.lineTo(-len * 0.48, hw * 0.6);
+  ctx.lineTo(-len * 0.42, hw);
+  ctx.lineTo(len * 0.15, hw);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = "#d0dae4";
+  ctx.fillRect(-len * 0.1, -hw * 0.7, len * 0.35, hw * 1.4);
+  ctx.fillRect(len * 0.05, -hw * 0.5, len * 0.2, hw);
+
+  ctx.fillStyle = "#cc4444";
+  ctx.fillRect(-len * 0.25, -4, 12, 8);
+
+  if (isPlayer) {
+    ctx.strokeStyle = "#6ecfff";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(len * 0.5, 0);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+function drawWorld() {
+  ctx.save();
+  ctx.translate(width / 2, height / 2);
+  ctx.rotate(-camera.rot + Math.PI / 2);
+  ctx.translate(-camera.x, -camera.y);
+
+  drawOcean();
+  drawLand();
+  drawBuoys();
+  drawWaypoints();
+  drawWake();
+
+  for (const ai of aiShips) drawShip(ai, false);
+  drawShip(ship, true);
+
+  ctx.restore();
+}
+
+function drawMinimap() {
+  const mw = minimapCanvas.width;
+  const mh = minimapCanvas.height;
+  const scale = Math.min(mw / WORLD_W, mh / WORLD_H) * 0.88;
+  const ox = mw / 2;
+  const oy = mh / 2;
+
+  minimapCtx.clearRect(0, 0, mw, mh);
+  minimapCtx.fillStyle = "#0a2840";
+  minimapCtx.beginPath();
+  minimapCtx.arc(mw / 2, mh / 2, mw / 2 - 2, 0, Math.PI * 2);
+  minimapCtx.fill();
+
+  minimapCtx.save();
+  minimapCtx.translate(ox, oy);
+  minimapCtx.scale(scale, scale);
+  minimapCtx.translate(-WORLD_W / 2, -WORLD_H / 2);
+
+  minimapCtx.fillStyle = "#2a4a32";
+  for (const poly of landPolygons) {
+    minimapCtx.beginPath();
+    poly.forEach((p, i) => {
+      if (i === 0) minimapCtx.moveTo(p.x, p.y);
+      else minimapCtx.lineTo(p.x, p.y);
     });
-    player.draw(ctx, camX, camY);
-    drawMinimap(camX, camY);
-    multiplayer.sendPlayerUpdate(now);
-  } else {
-    drawBackground(time, WORLD_W / 2, WORLD_H / 2);
-    if (player) {
-      const camX = player.x;
-      const camY = player.y;
-      aiFish.forEach((f) => f.draw(ctx, camX, camY));
-      player.draw(ctx, camX, camY);
-    }
+    minimapCtx.closePath();
+    minimapCtx.fill();
   }
 
-  requestAnimationFrame(animate);
+  minimapCtx.strokeStyle = "rgba(110,207,255,0.5)";
+  minimapCtx.fillStyle = "rgba(110,207,255,0.3)";
+  for (let i = 0; i < waypoints.length; i++) {
+    const wp = waypoints[i];
+    minimapCtx.beginPath();
+    minimapCtx.arc(wp.x, wp.y, i === currentWaypoint ? 20 : 12, 0, Math.PI * 2);
+    if (i === currentWaypoint) minimapCtx.fill();
+    minimapCtx.stroke();
+  }
+
+  minimapCtx.fillStyle = "#6a8a9a";
+  for (const ai of aiShips) {
+    minimapCtx.fillRect(ai.x - 15, ai.y - 5, 30, 10);
+  }
+
+  minimapCtx.fillStyle = "#6ecfff";
+  minimapCtx.beginPath();
+  minimapCtx.arc(ship.x, ship.y, 10, 0, Math.PI * 2);
+  minimapCtx.fill();
+
+  minimapCtx.strokeStyle = "rgba(255,255,255,0.6)";
+  minimapCtx.lineWidth = 2 / scale;
+  const vx = Math.cos(ship.heading) * 30;
+  const vy = Math.sin(ship.heading) * 30;
+  minimapCtx.beginPath();
+  minimapCtx.moveTo(ship.x, ship.y);
+  minimapCtx.lineTo(ship.x + vx, ship.y + vy);
+  minimapCtx.stroke();
+
+  minimapCtx.restore();
+
+  minimapCtx.strokeStyle = "rgba(110,207,255,0.4)";
+  minimapCtx.lineWidth = 2;
+  minimapCtx.beginPath();
+  minimapCtx.arc(mw / 2, mh / 2, mw / 2 - 2, 0, Math.PI * 2);
+  minimapCtx.stroke();
 }
 
-startBtn.addEventListener("click", async () => {
-  try {
-    await input.requestGyroPermission();
-  } catch (err) {
-    console.warn("Could not enable motion controls:", err);
+function endGame(type, message) {
+  gameState = type;
+  hud.classList.add("hidden");
+  touchControls.classList.add("hidden");
+  if (type === "success") {
+    const finalScore = Math.max(0, Math.round(score - collisionPenalty));
+    const mins = Math.floor(missionTime / 60);
+    const secs = Math.floor(missionTime % 60);
+    successScore.textContent = `Score: ${finalScore}`;
+    successTime.textContent = `Time: ${mins}:${String(secs).padStart(2, "0")}`;
+    successScreen.classList.remove("hidden");
+  } else {
+    gameoverTitle.textContent = type === "ground" ? "Grounded!" : "Collision!";
+    gameoverReason.textContent = message;
+    gameoverScreen.classList.remove("hidden");
   }
-  resetGame();
-  multiplayer.notifyRespawn();
-  setState("playing");
-});
+}
 
-restartBtn.addEventListener("click", async () => {
-  try {
-    if (!input.gyroActive) await input.requestGyroPermission();
-  } catch (err) {
-    console.warn("Could not enable motion controls:", err);
+function update(dt) {
+  if (gameState !== "playing") return;
+
+  missionTime += dt;
+  wavePhase += dt;
+  score = Math.max(0, score - dt * 2);
+
+  updateHelmFromKeyboard(dt);
+  const input = getEffectiveHelm();
+  helm.throttle = input.throttle;
+  applyPhysics(ship, input, dt);
+
+  for (const ai of aiShips) updateAI(ai, dt);
+
+  const hit = checkCollisions();
+  if (hit) {
+    endGame(hit.type, hit.message);
+    return;
   }
+
+  checkWaypoint();
+  if (checkDocking()) {
+    score += 300;
+    endGame("success", "");
+    return;
+  }
+
+  updateWake(dt);
+  updateCamera(dt);
+  updateHUD();
+}
+
+function render() {
+  ctx.clearRect(0, 0, width, height);
+  if (gameState === "playing" || gameState === "success" || gameState === "ground" || gameState === "collision") {
+    drawWorld();
+    drawMinimap();
+  }
+}
+
+function loop(now) {
+  const dt = Math.min((now - lastTime) / 1000, MAX_DT);
+  lastTime = now;
+  update(dt);
+  render();
+  requestAnimationFrame(loop);
+}
+
+function startGame() {
   resetGame();
-  multiplayer.notifyRespawn();
-  setState("playing");
-});
+  gameState = "playing";
+  startScreen.classList.add("hidden");
+  gameoverScreen.classList.add("hidden");
+  successScreen.classList.add("hidden");
+  hud.classList.remove("hidden");
+  if (width < 768) touchControls.classList.remove("hidden");
+}
 
-window.addEventListener("resize", () => {
-  resize();
-  initBubbles();
-});
+function setupInput() {
+  window.addEventListener("keydown", (e) => {
+    keys[e.key.toLowerCase()] = true;
+    if (e.key === " " && gameState === "playing") e.preventDefault();
+    if (e.key.toLowerCase() === "r" && (gameState === "playing" || gameState === "ground" || gameState === "collision" || gameState === "success")) {
+      startGame();
+    }
+  });
+  window.addEventListener("keyup", (e) => {
+    keys[e.key.toLowerCase()] = false;
+  });
 
-window.addEventListener("orientationchange", () => {
-  setTimeout(() => {
-    resize();
-    initBubbles();
-  }, 100);
-});
+  startBtn.addEventListener("click", startGame);
+  restartBtn.addEventListener("click", startGame);
+  successRestartBtn.addEventListener("click", startGame);
 
+  document.querySelectorAll(".touch-btn").forEach((btn) => {
+    const action = btn.dataset.action;
+    const setBow = (v) => {
+      touchBow = v;
+      btn.classList.toggle("active", v !== 0);
+    };
+    btn.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      if (action === "bow-port") setBow(-1);
+      if (action === "bow-starboard") setBow(1);
+    });
+    btn.addEventListener("pointerup", () => setBow(0));
+    btn.addEventListener("pointerleave", () => setBow(0));
+  });
+
+  let rudderDrag = false;
+  rudderWheel.addEventListener("pointerdown", (e) => {
+    rudderDrag = true;
+    rudderWheel.setPointerCapture(e.pointerId);
+    updateRudderTouch(e);
+  });
+  rudderWheel.addEventListener("pointermove", (e) => {
+    if (rudderDrag) updateRudderTouch(e);
+  });
+  rudderWheel.addEventListener("pointerup", () => {
+    rudderDrag = false;
+  });
+
+  function updateRudderTouch(e) {
+    const rect = rudderWheel.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const angle = Math.atan2(e.clientY - cy, e.clientX - cx) + Math.PI / 2;
+    touchRudder = clamp(angle, -MAX_RUDDER, MAX_RUDDER);
+    const deg = (touchRudder / MAX_RUDDER) * 90;
+    rudderKnob.style.transform = `rotate(${deg}deg)`;
+  }
+
+  let throttleDrag = false;
+  throttleSlider.addEventListener("pointerdown", (e) => {
+    throttleDrag = true;
+    throttleSlider.setPointerCapture(e.pointerId);
+    updateThrottleTouch(e);
+  });
+  throttleSlider.addEventListener("pointermove", (e) => {
+    if (throttleDrag) updateThrottleTouch(e);
+  });
+  throttleSlider.addEventListener("pointerup", () => {
+    throttleDrag = false;
+  });
+
+  function updateThrottleTouch(e) {
+    const track = throttleSlider.querySelector(".throttle-track");
+    const rect = track.getBoundingClientRect();
+    const t = 1 - clamp((e.clientY - rect.top) / rect.height, 0, 1);
+    touchThrottle = t * 2 - 1;
+    throttleThumb.style.top = `${(1 - (touchThrottle + 1) / 2) * 100}%`;
+    throttleThumb.style.transform = "translateY(-50%)";
+    throttleFill.style.height = `${((touchThrottle + 1) / 2) * 100}%`;
+  }
+}
+
+window.addEventListener("resize", resize);
+setupInput();
 resize();
-initBubbles();
-initCaustics();
 resetGame();
-setState("start");
-minimapCanvas.classList.add("hidden");
-multiplayer.connect();
-requestAnimationFrame(animate);
+requestAnimationFrame((t) => {
+  lastTime = t;
+  requestAnimationFrame(loop);
+});
