@@ -15,9 +15,22 @@ const speedLabel = document.getElementById("speed-label");
 const headingLabel = document.getElementById("heading-label");
 const rudderLabel = document.getElementById("rudder-label");
 const throttleLabel = document.getElementById("throttle-label");
+const fuelLabel = document.getElementById("fuel-label");
+const distanceLabel = document.getElementById("distance-label");
 const missionLabel = document.getElementById("mission-label");
 const scoreLabel = document.getElementById("score-label");
 const warningLabel = document.getElementById("warning-label");
+const fuelWarningLabel = document.getElementById("fuel-warning-label");
+const chartPanel = document.getElementById("chart-panel");
+const chartToggle = document.getElementById("chart-toggle");
+const chartClose = document.getElementById("chart-close");
+const chartSpeed = document.getElementById("chart-speed");
+const chartDistance = document.getElementById("chart-distance");
+const chartFuel = document.getElementById("chart-fuel");
+const statTime = document.getElementById("stat-time");
+const statDistance = document.getElementById("stat-distance");
+const statFuelUsed = document.getElementById("stat-fuel-used");
+const statAvgSpeed = document.getElementById("stat-avg-speed");
 const successScore = document.getElementById("success-score");
 const successTime = document.getElementById("success-time");
 const gameoverTitle = document.getElementById("gameover-title");
@@ -49,6 +62,16 @@ const DRAG_ANG = 0.85;
 const RUDDER_COEFF = 2.8e6;
 const DOCK_SPEED_KN = 3;
 const DOCK_ALIGN_DEG = 18;
+const MAX_FUEL = 100;
+const IDLE_FUEL_RATE = 0.06;
+const THROTTLE_FUEL_RATE = 10;
+const BOW_FUEL_RATE = 3.5;
+const METERS_TO_NM = 1 / 1852;
+const LOG_INTERVAL = 0.5;
+const MAX_LOG_SAMPLES = 360;
+const WARN_CHECK_INTERVAL = 0.2;
+const HUD_UPDATE_INTERVAL = 0.1;
+const CHART_UPDATE_INTERVAL = 0.25;
 
 let width = 0;
 let height = 0;
@@ -60,7 +83,22 @@ let score = 1000;
 let collisionPenalty = 0;
 let wavePhase = 0;
 let wakeParticles = [];
+let wakeCount = 0;
+const WAKE_POOL_SIZE = 180;
 let camera = { x: 0, y: 0, rot: 0 };
+let fuel = MAX_FUEL;
+let fuelUsed = 0;
+let totalDistance = 0;
+let voyageLog = [];
+let lastLogTime = 0;
+let lastWarnCheck = 0;
+let lastHudUpdate = 0;
+let lastChartUpdate = 0;
+let collisionWarn = false;
+let isPaused = false;
+let chartPanelOpen = false;
+let prevShipX = 0;
+let prevShipY = 0;
 
 const keys = {};
 const helm = { throttle: 0, rudder: 0, bow: 0 };
@@ -257,6 +295,17 @@ function createAIShips() {
   ];
 }
 
+function getSpeedKn(s = ship) {
+  if (!s) return 0;
+  return Math.sqrt(s.vx * s.vx + s.vy * s.vy) * MPS_TO_KNOTS;
+}
+
+function formatTime(seconds) {
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  return `${mins}:${String(secs).padStart(2, "0")}`;
+}
+
 function resetGame() {
   ship = createShip(480, 2180, -Math.PI / 2);
   ship.throttle = 0;
@@ -265,16 +314,30 @@ function resetGame() {
   missionTime = 0;
   score = 1000;
   collisionPenalty = 0;
-  wakeParticles = [];
+  wakeCount = 0;
+  wakeParticles.length = WAKE_POOL_SIZE;
+  for (let i = 0; i < WAKE_POOL_SIZE; i++) wakeParticles[i] = { x: 0, y: 0, life: 0, size: 0 };
   helm.throttle = 0;
   helm.rudder = 0;
   helm.bow = 0;
   touchRudder = 0;
   touchThrottle = 0;
   touchBow = 0;
+  fuel = MAX_FUEL;
+  fuelUsed = 0;
+  totalDistance = 0;
+  voyageLog = [];
+  lastLogTime = 0;
+  lastWarnCheck = 0;
+  lastHudUpdate = 0;
+  lastChartUpdate = 0;
+  collisionWarn = false;
+  prevShipX = ship.x;
+  prevShipY = ship.y;
   camera.x = ship.x;
   camera.y = ship.y;
   camera.rot = ship.heading;
+  voyageLog.push({ t: 0, speed: 0, distance: 0, fuel: MAX_FUEL });
 }
 
 function resize() {
@@ -289,6 +352,21 @@ function resize() {
 
   const isMobile = width < 768;
   touchControls.classList.toggle("hidden", gameState !== "playing" || !isMobile);
+  updateChartVisibility();
+}
+
+function updateChartVisibility() {
+  const isMobile = width < 768;
+  chartToggle.classList.toggle("hidden", gameState !== "playing" || !isMobile);
+  if (gameState !== "playing") {
+    chartPanel.classList.add("hidden");
+    return;
+  }
+  if (isMobile) {
+    chartPanel.classList.toggle("hidden", !chartPanelOpen);
+  } else {
+    chartPanel.classList.remove("hidden");
+  }
 }
 
 function getEffectiveHelm() {
@@ -446,19 +524,19 @@ function updateWake(dt) {
   if (speed > 2) {
     const cos = Math.cos(ship.heading);
     const sin = Math.sin(ship.heading);
-    wakeParticles.push({
-      x: ship.x - cos * SHIP_LENGTH * 0.45,
-      y: ship.y - sin * SHIP_LENGTH * 0.45,
-      life: 1,
-      size: 4 + speed * 0.08,
-    });
+    const p = wakeParticles[wakeCount % WAKE_POOL_SIZE];
+    p.x = ship.x - cos * SHIP_LENGTH * 0.45;
+    p.y = ship.y - sin * SHIP_LENGTH * 0.45;
+    p.life = 1;
+    p.size = 4 + speed * 0.08;
+    wakeCount++;
   }
-  wakeParticles = wakeParticles.filter((p) => {
+  for (let i = 0; i < WAKE_POOL_SIZE; i++) {
+    const p = wakeParticles[i];
+    if (p.life <= 0) continue;
     p.life -= dt * 0.5;
     p.size += dt * 2;
-    return p.life > 0;
-  });
-  if (wakeParticles.length > 200) wakeParticles.splice(0, wakeParticles.length - 200);
+  }
 }
 
 function updateCamera(dt) {
@@ -469,51 +547,158 @@ function updateCamera(dt) {
   camera.rot = lerp(camera.rot, ship.heading, clamp(dt * 4, 0, 1));
 }
 
+function checkCollisionWarning() {
+  const corners = shipCorners(ship);
+  for (const ai of aiShips) {
+    if (dist(ship.x, ship.y, ai.x, ai.y) < SHIP_LENGTH * 1.5) return true;
+  }
+  for (const c of corners) {
+    for (const poly of landPolygons) {
+      if (pointInPoly(c.x, c.y, poly)) return true;
+      for (let i = 0; i < poly.length; i++) {
+        if (dist(c.x, c.y, poly[i].x, poly[i].y) < 90) return true;
+      }
+    }
+  }
+  return false;
+}
+
+function updateFuel(input, dt) {
+  const throttleUse = Math.abs(input.throttle) * THROTTLE_FUEL_RATE * dt;
+  const bowUse = Math.abs(input.bow) * BOW_FUEL_RATE * dt;
+  const idleUse = IDLE_FUEL_RATE * dt;
+  const used = throttleUse + bowUse + idleUse;
+  fuel = Math.max(0, fuel - used);
+  fuelUsed += used;
+}
+
+function recordVoyageSample() {
+  voyageLog.push({
+    t: missionTime,
+    speed: getSpeedKn(),
+    distance: totalDistance,
+    fuel,
+  });
+  if (voyageLog.length > MAX_LOG_SAMPLES) voyageLog.shift();
+}
+
+function drawLineChart(canvas, samples, key, color, yMin, yMax) {
+  if (!canvas) return;
+  const c = canvas.getContext("2d");
+  const w = canvas.width;
+  const h = canvas.height;
+  c.clearRect(0, 0, w, h);
+
+  c.strokeStyle = "rgba(100,180,255,0.15)";
+  c.lineWidth = 1;
+  for (let i = 1; i < 4; i++) {
+    const gy = (h / 4) * i;
+    c.beginPath();
+    c.moveTo(0, gy);
+    c.lineTo(w, gy);
+    c.stroke();
+  }
+
+  if (samples.length < 2) return;
+
+  const t0 = samples[0].t;
+  const t1 = samples[samples.length - 1].t || 1;
+  const tRange = Math.max(t1 - t0, 1);
+
+  let minV = yMin;
+  let maxV = yMax;
+  if (minV === undefined || maxV === undefined) {
+    minV = Infinity;
+    maxV = -Infinity;
+    for (const s of samples) {
+      minV = Math.min(minV, s[key]);
+      maxV = Math.max(maxV, s[key]);
+    }
+    if (maxV - minV < 0.01) maxV = minV + 1;
+    minV = Math.max(0, minV * 0.95);
+    maxV *= 1.05;
+  }
+
+  c.strokeStyle = color;
+  c.lineWidth = 2;
+  c.beginPath();
+  for (let i = 0; i < samples.length; i++) {
+    const s = samples[i];
+    const x = ((s.t - t0) / tRange) * (w - 8) + 4;
+    const y = h - 4 - ((s[key] - minV) / (maxV - minV)) * (h - 8);
+    if (i === 0) c.moveTo(x, y);
+    else c.lineTo(x, y);
+  }
+  c.stroke();
+
+  c.fillStyle = color.startsWith("#")
+    ? color + "20"
+    : color.replace(")", ",0.12)").replace("rgb", "rgba");
+  c.beginPath();
+  for (let i = 0; i < samples.length; i++) {
+    const s = samples[i];
+    const x = ((s.t - t0) / tRange) * (w - 8) + 4;
+    const y = h - 4 - ((s[key] - minV) / (maxV - minV)) * (h - 8);
+    if (i === 0) c.moveTo(x, y);
+    else c.lineTo(x, y);
+  }
+  c.lineTo(((samples[samples.length - 1].t - t0) / tRange) * (w - 8) + 4, h);
+  c.lineTo(4, h);
+  c.closePath();
+  c.fill();
+
+  c.fillStyle = "rgba(200,220,255,0.6)";
+  c.font = "9px system-ui";
+  c.fillText(maxV.toFixed(1), 4, 10);
+  c.fillText(minV.toFixed(1), 4, h - 4);
+}
+
+function updateCharts() {
+  drawLineChart(chartSpeed, voyageLog, "speed", "#6ecfff", 0);
+  drawLineChart(chartDistance, voyageLog, "distance", "#44dd88", 0);
+  drawLineChart(chartFuel, voyageLog, "fuel", "#f0a030", 0, 100);
+
+  statTime.textContent = `Time: ${formatTime(missionTime)}`;
+  statDistance.textContent = `Distance: ${totalDistance.toFixed(2)} nm`;
+  statFuelUsed.textContent = `Fuel used: ${fuelUsed.toFixed(1)}%`;
+  const avgSpeed = missionTime > 0 ? totalDistance / (missionTime / 3600) : 0;
+  statAvgSpeed.textContent = `Avg speed: ${avgSpeed.toFixed(1)} kn`;
+}
+
 function updateHUD() {
-  const speed = Math.sqrt(ship.vx * ship.vx + ship.vy * ship.vy) * MPS_TO_KNOTS;
+  const speed = getSpeedKn();
   const h = getEffectiveHelm();
   speedLabel.textContent = `${speed.toFixed(1)} kn`;
   headingLabel.textContent = `${String(headingDeg(ship.heading)).padStart(3, "0")}°`;
   rudderLabel.textContent = `${Math.round((h.rudder / MAX_RUDDER) * 35)}°`;
   throttleLabel.textContent = `${Math.round(h.throttle * 100)}%`;
+  fuelLabel.textContent = `${fuel.toFixed(0)}%`;
+  distanceLabel.textContent = `${totalDistance.toFixed(2)} nm`;
   const wp = waypoints[currentWaypoint];
   missionLabel.textContent = `Mission: ${wp ? wp.label : "Complete"}`;
   scoreLabel.textContent = `Score: ${Math.max(0, Math.round(score - collisionPenalty))}`;
-
-  let warn = false;
-  const corners = shipCorners(ship);
-  for (const poly of landPolygons) {
-    for (const c of corners) {
-      for (const p of poly) {
-        if (dist(c.x, c.y, p.x, p.y) < 100) warn = true;
-      }
-    }
-  }
-  for (const ai of aiShips) {
-    if (dist(ship.x, ship.y, ai.x, ai.y) < SHIP_LENGTH * 1.5) warn = true;
-  }
-  warningLabel.classList.toggle("hidden", !warn);
+  warningLabel.classList.toggle("hidden", !collisionWarn);
+  fuelWarningLabel.classList.toggle("hidden", fuel > 15);
 }
 
 function drawOcean() {
-  const grad = ctx.createLinearGradient(0, -height, 0, height);
-  grad.addColorStop(0, "#0c2848");
-  grad.addColorStop(0.5, "#0e3a5c");
-  grad.addColorStop(1, "#082038");
-  ctx.fillStyle = grad;
-  ctx.fillRect(-width, -height, width * 2, height * 2);
+  const pad = Math.max(width, height) * 1.5;
+  ctx.fillStyle = "#0e3458";
+  ctx.fillRect(camera.x - pad, camera.y - pad, pad * 2, pad * 2);
 
-  ctx.globalAlpha = 0.15;
-  for (let i = 0; i < 8; i++) {
-    const wy = Math.sin(wavePhase + i * 0.8) * 30;
-    ctx.strokeStyle = "#5ecfff";
-    ctx.lineWidth = 2;
+  ctx.globalAlpha = 0.1;
+  ctx.strokeStyle = "#5ecfff";
+  ctx.lineWidth = 2;
+  const startX = Math.floor((camera.x - width) / 80) * 80;
+  const endX = camera.x + width;
+  for (let i = 0; i < 4; i++) {
     ctx.beginPath();
-    for (let x = -width; x < width; x += 40) {
-      const wx = x + Math.sin(wavePhase * 2 + x * 0.01 + i) * 12;
-      const y = wy + i * 35 + Math.sin(x * 0.008 + wavePhase + i) * 8;
-      if (x === -width) ctx.moveTo(wx, y);
-      else ctx.lineTo(wx, y);
+    const phase = wavePhase + i * 1.2;
+    const baseY = camera.y + Math.sin(phase) * 30 - height * 0.25 + i * 70;
+    for (let x = startX; x < endX; x += 80) {
+      const y = baseY + Math.sin(x * 0.004 + phase * 2) * 8;
+      if (x === startX) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
     }
     ctx.stroke();
   }
@@ -595,7 +780,9 @@ function drawWaypoints() {
 }
 
 function drawWake() {
-  for (const p of wakeParticles) {
+  for (let i = 0; i < WAKE_POOL_SIZE; i++) {
+    const p = wakeParticles[i];
+    if (p.life <= 0) continue;
     ctx.fillStyle = `rgba(180, 220, 255, ${p.life * 0.35})`;
     ctx.beginPath();
     ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
@@ -735,15 +922,17 @@ function endGame(type, message) {
   gameState = type;
   hud.classList.add("hidden");
   touchControls.classList.add("hidden");
+  chartToggle.classList.add("hidden");
+  if (width < 768) chartPanel.classList.add("hidden");
+  updateCharts();
   if (type === "success") {
     const finalScore = Math.max(0, Math.round(score - collisionPenalty));
-    const mins = Math.floor(missionTime / 60);
-    const secs = Math.floor(missionTime % 60);
     successScore.textContent = `Score: ${finalScore}`;
-    successTime.textContent = `Time: ${mins}:${String(secs).padStart(2, "0")}`;
+    successTime.textContent = `Time: ${formatTime(missionTime)} | Fuel left: ${fuel.toFixed(0)}%`;
     successScreen.classList.remove("hidden");
   } else {
-    gameoverTitle.textContent = type === "ground" ? "Grounded!" : "Collision!";
+    gameoverTitle.textContent =
+      type === "ground" ? "Grounded!" : type === "fuel" ? "Out of Fuel!" : "Collision!";
     gameoverReason.textContent = message;
     gameoverScreen.classList.remove("hidden");
   }
@@ -760,8 +949,20 @@ function update(dt) {
   const input = getEffectiveHelm();
   helm.throttle = input.throttle;
   applyPhysics(ship, input, dt);
+  updateFuel(input, dt);
+
+  const dx = ship.x - prevShipX;
+  const dy = ship.y - prevShipY;
+  totalDistance += Math.sqrt(dx * dx + dy * dy) * METERS_TO_NM;
+  prevShipX = ship.x;
+  prevShipY = ship.y;
 
   for (const ai of aiShips) updateAI(ai, dt);
+
+  if (fuel <= 0) {
+    endGame("fuel", "You ran out of fuel. Use throttle sparingly.");
+    return;
+  }
 
   const hit = checkCollisions();
   if (hit) {
@@ -772,13 +973,33 @@ function update(dt) {
   checkWaypoint();
   if (checkDocking()) {
     score += 300;
+    score += Math.round(fuel * 2);
     endGame("success", "");
     return;
   }
 
   updateWake(dt);
   updateCamera(dt);
-  updateHUD();
+
+  if (missionTime - lastLogTime >= LOG_INTERVAL) {
+    lastLogTime = missionTime;
+    recordVoyageSample();
+  }
+
+  if (missionTime - lastWarnCheck >= WARN_CHECK_INTERVAL) {
+    lastWarnCheck = missionTime;
+    collisionWarn = checkCollisionWarning();
+  }
+
+  if (missionTime - lastHudUpdate >= HUD_UPDATE_INTERVAL) {
+    lastHudUpdate = missionTime;
+    updateHUD();
+  }
+
+  if (missionTime - lastChartUpdate >= CHART_UPDATE_INTERVAL) {
+    lastChartUpdate = missionTime;
+    updateCharts();
+  }
 }
 
 function render() {
@@ -790,6 +1011,11 @@ function render() {
 }
 
 function loop(now) {
+  if (isPaused) {
+    requestAnimationFrame(loop);
+    return;
+  }
+  if (!lastTime) lastTime = now;
   const dt = Math.min((now - lastTime) / 1000, MAX_DT);
   lastTime = now;
   update(dt);
@@ -804,6 +1030,10 @@ function startGame() {
   gameoverScreen.classList.add("hidden");
   successScreen.classList.add("hidden");
   hud.classList.remove("hidden");
+  chartPanelOpen = width < 768 ? false : true;
+  updateChartVisibility();
+  updateHUD();
+  updateCharts();
   if (width < 768) touchControls.classList.remove("hidden");
 }
 
@@ -811,8 +1041,12 @@ function setupInput() {
   window.addEventListener("keydown", (e) => {
     keys[e.key.toLowerCase()] = true;
     if (e.key === " " && gameState === "playing") e.preventDefault();
-    if (e.key.toLowerCase() === "r" && (gameState === "playing" || gameState === "ground" || gameState === "collision" || gameState === "success")) {
+    if (e.key.toLowerCase() === "r" && (gameState === "playing" || gameState === "ground" || gameState === "collision" || gameState === "success" || gameState === "fuel")) {
       startGame();
+    }
+    if (e.key.toLowerCase() === "m" && gameState === "playing" && width < 768) {
+      chartPanelOpen = !chartPanelOpen;
+      updateChartVisibility();
     }
   });
   window.addEventListener("keyup", (e) => {
@@ -822,6 +1056,20 @@ function setupInput() {
   startBtn.addEventListener("click", startGame);
   restartBtn.addEventListener("click", startGame);
   successRestartBtn.addEventListener("click", startGame);
+
+  chartToggle.addEventListener("click", () => {
+    chartPanelOpen = !chartPanelOpen;
+    updateChartVisibility();
+  });
+  chartClose.addEventListener("click", () => {
+    chartPanelOpen = false;
+    updateChartVisibility();
+  });
+
+  document.addEventListener("visibilitychange", () => {
+    isPaused = document.hidden;
+    if (!isPaused) lastTime = performance.now();
+  });
 
   document.querySelectorAll(".touch-btn").forEach((btn) => {
     const action = btn.dataset.action;
@@ -889,6 +1137,8 @@ window.addEventListener("resize", resize);
 setupInput();
 resize();
 resetGame();
+wakeParticles.length = WAKE_POOL_SIZE;
+for (let i = 0; i < WAKE_POOL_SIZE; i++) wakeParticles[i] = { x: 0, y: 0, life: 0, size: 0 };
 requestAnimationFrame((t) => {
   lastTime = t;
   requestAnimationFrame(loop);

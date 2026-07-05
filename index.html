@@ -23,9 +23,10 @@
             <li><kbd>Q</kbd>/<kbd>E</kbd> — Bow thrusters</li>
             <li><kbd>Space</kbd> — Center rudder</li>
             <li><kbd>R</kbd> — Restart mission</li>
+            <li><kbd>M</kbd> — Toggle voyage charts (mobile)</li>
           </ul>
           <button id="start-btn" type="button">Set Sail</button>
-          <p class="hint">Touch controls available on mobile. Gamepad supported.</p>
+          <p class="hint">Touch controls available on mobile. Gamepad supported. Manage fuel wisely.</p>
         </div>
       </div>
 
@@ -47,13 +48,49 @@
             <span class="label">THR</span>
             <span id="throttle-label" class="value">0%</span>
           </div>
+          <div class="instrument">
+            <span class="label">FUEL</span>
+            <span id="fuel-label" class="value">100%</span>
+          </div>
+          <div class="instrument">
+            <span class="label">DIST</span>
+            <span id="distance-label" class="value">0.0 nm</span>
+          </div>
         </div>
         <div class="hud-mission">
           <span id="mission-label">Mission: Depart pier</span>
           <span id="score-label">Score: 1000</span>
         </div>
         <p id="warning-label" class="warning hidden">COLLISION WARNING</p>
+        <p id="fuel-warning-label" class="warning fuel-warn hidden">LOW FUEL</p>
       </div>
+
+      <button id="chart-toggle" class="chart-toggle hidden" type="button" aria-label="Toggle voyage charts">Charts</button>
+
+      <aside id="chart-panel" class="chart-panel hidden" aria-label="Voyage charts">
+        <div class="chart-header">
+          <h2>Voyage Log</h2>
+          <button id="chart-close" class="chart-close" type="button" aria-label="Close charts">&times;</button>
+        </div>
+        <div class="chart-stats">
+          <span id="stat-time">Time: 0:00</span>
+          <span id="stat-distance">Distance: 0.0 nm</span>
+          <span id="stat-fuel-used">Fuel used: 0%</span>
+          <span id="stat-avg-speed">Avg speed: 0.0 kn</span>
+        </div>
+        <div class="chart-block">
+          <h3>Speed (kn)</h3>
+          <canvas id="chart-speed" width="320" height="100"></canvas>
+        </div>
+        <div class="chart-block">
+          <h3>Distance (nm)</h3>
+          <canvas id="chart-distance" width="320" height="100"></canvas>
+        </div>
+        <div class="chart-block">
+          <h3>Fuel (%)</h3>
+          <canvas id="chart-fuel" width="320" height="100"></canvas>
+        </div>
+      </aside>
 
       <div id="touch-controls" class="touch-controls hidden" aria-hidden="true">
         <div class="thruster-row">
