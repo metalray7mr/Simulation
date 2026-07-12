@@ -3,22 +3,261 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#0a1628" />
-    <title>Two Fish</title>
+    <meta name="theme-color" content="#0f3d5c" />
+    <meta
+      name="description"
+      content="Step-by-step guide to replace a lost Delhi Government medical card (DGEHS or CGHS)."
+    />
+    <title>Lost Delhi Government Medical Card — What To Do</title>
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
-    <div id="app">
-      <canvas id="scene"></canvas>
-      <header class="hud">
-        <h1>Two Fish</h1>
-        <p>Green A and blue B among random sea life</p>
-      </header>
-      <footer class="legend">
-        <span class="chip chip-a">A — Green</span>
-        <span class="chip chip-b">B — Blue</span>
-      </footer>
-    </div>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <div class="container header-inner">
+        <div>
+          <p class="eyebrow">Delhi Government Health Schemes</p>
+          <h1>Lost Medical Card Guide</h1>
+          <p class="subtitle">
+            Follow these official steps to get a duplicate DGEHS or CGHS card in Delhi.
+          </p>
+        </div>
+        <div class="progress-card" aria-live="polite">
+          <span class="progress-label">Your progress</span>
+          <div class="progress-bar" role="progressbar" aria-valuemin="0" aria-valuemax="4" aria-valuenow="0">
+            <div class="progress-fill" id="progressFill"></div>
+          </div>
+          <span class="progress-text" id="progressText">0 of 4 steps completed</span>
+        </div>
+      </div>
+    </header>
+
+    <main id="main" class="container">
+      <section class="card alert-card" aria-labelledby="urgent-heading">
+        <h2 id="urgent-heading">Need treatment right now?</h2>
+        <ul>
+          <li>Go to your attached dispensary or hospital (AMA) and explain the card is lost.</li>
+          <li>Carry photo ID: Aadhaar, employee or pension ID, or passport.</li>
+          <li>For emergencies, bring payslip, pension slip, old card photo, or department ID.</li>
+          <li>Do not delay urgent care while waiting for the duplicate card.</li>
+        </ul>
+      </section>
+
+      <section class="card" aria-labelledby="scheme-heading">
+        <h2 id="scheme-heading">Which card do you have?</h2>
+        <div class="scheme-toggle" role="tablist" aria-label="Medical card scheme">
+          <button class="scheme-btn active" role="tab" aria-selected="true" data-scheme="dgehs" id="tab-dgehs">
+            DGEHS
+            <span>Delhi Govt employee / pensioner</span>
+          </button>
+          <button class="scheme-btn" role="tab" aria-selected="false" data-scheme="cghs" id="tab-cghs">
+            CGHS
+            <span>Central Govt employee / pensioner</span>
+          </button>
+        </div>
+        <p class="scheme-note" id="schemeNote">
+          DGEHS duplicates are issued by your salary or pension department. There is no single online reprint portal for all beneficiaries.
+        </p>
+      </section>
+
+      <section class="steps" aria-label="Replacement steps">
+        <article class="step-card" data-step="1">
+          <div class="step-header">
+            <span class="step-number">Step 1</span>
+            <label class="step-check">
+              <input type="checkbox" id="step1" data-step-key="file-police-complaint" />
+              <span>Mark as done</span>
+            </label>
+          </div>
+          <h2>File a police complaint or FIR</h2>
+          <p>Official rules require proof that the card was lost.</p>
+          <ul>
+            <li>Visit your nearest police station, or use Delhi Police online lost-article reporting if available in your area.</li>
+            <li>Obtain a copy of the FIR or written police complaint mentioning loss of your DGEHS / Medical Facility Card.</li>
+            <li>If the card was stolen, mention theft explicitly in the FIR.</li>
+            <li>Keep the original complaint receipt safe.</li>
+          </ul>
+          <details class="template-block">
+            <summary>Sample text for police complaint</summary>
+            <pre id="policeTemplate">Subject: Loss of DGEHS Medical Facility Card
+
+I, [Your Full Name], resident of [Address], employee/pensioner of [Department Name],
+hereby report that my DGEHS Medical Facility Card (Card No.: [if known]) was lost on
+[Date] at/near [Location].
+
+I request a copy of this complaint for submission to my department for issuance of a
+duplicate card.
+
+Contact: [Phone Number]
+Signature: _______________
+Date: _______________</pre>
+            <button type="button" class="btn secondary" data-copy="policeTemplate">Copy template</button>
+          </details>
+        </article>
+
+        <article class="step-card" data-step="2">
+          <div class="step-header">
+            <span class="step-number">Step 2</span>
+            <label class="step-check">
+              <input type="checkbox" id="step2" data-step-key="apply-department" />
+              <span>Mark as done</span>
+            </label>
+          </div>
+          <h2>Apply for a duplicate at your department</h2>
+          <p class="scheme-text dgehs-only">
+            Apply at the same administrative office from which you draw salary (if working) or pension (if retired).
+          </p>
+          <p class="scheme-text cghs-only hidden">
+            Apply to the Additional Director, CGHS Headquarters, Delhi.
+          </p>
+
+          <div class="doc-grid">
+            <div class="doc-item">
+              <strong>Application</strong>
+              <span>Written request for duplicate card</span>
+            </div>
+            <div class="doc-item">
+              <strong>FIR / complaint copy</strong>
+              <span>Mandatory</span>
+            </div>
+            <div class="doc-item dgehs-only">
+              <strong>Fee</strong>
+              <span>Rs. 10</span>
+            </div>
+            <div class="doc-item cghs-only hidden">
+              <strong>Fee</strong>
+              <span>IPO of Rs. 50 payable to "P.A.O. CGHS Delhi"</span>
+            </div>
+            <div class="doc-item">
+              <strong>Photographs</strong>
+              <span>Two latest family photographs of the beneficiary</span>
+            </div>
+          </div>
+
+          <details class="template-block">
+            <summary>Sample application letter</summary>
+            <pre id="applicationTemplate">To,
+The [Card Issuing Authority / Head of Department]
+[Department Name]
+[Office Address]
+
+Subject: Application for issuance of duplicate DGEHS Medical Facility Card
+
+Respected Sir/Madam,
+
+I, [Your Full Name], [Designation], Employee ID / Pension Payment Order No. [Number],
+am a beneficiary under the Delhi Government Employees Health Scheme (DGEHS).
+
+My DGEHS Medical Facility Card was lost on [Date]. A copy of the FIR / police
+complaint regarding the loss is enclosed.
+
+I request you to kindly issue a duplicate Medical Facility Card. I am enclosing:
+1. Copy of FIR / police complaint
+2. Two latest family photographs
+3. Fee of Rs. 10/-
+
+Thanking you,
+
+[Your Name]
+[Employee ID / PPO No.]
+[Contact Number]
+[Date]</pre>
+            <button type="button" class="btn secondary" data-copy="applicationTemplate">Copy template</button>
+          </details>
+
+          <p class="note cghs-only hidden">
+            CGHS also offers a "Print your own card" option on the CGHS website if your record is already in their system.
+          </p>
+        </article>
+
+        <article class="step-card" data-step="3">
+          <div class="step-header">
+            <span class="step-number">Step 3</span>
+            <label class="step-check">
+              <input type="checkbox" id="step3" data-step-key="follow-up-dgehs" />
+              <span>Mark as done</span>
+            </label>
+          </div>
+          <h2>Follow up if delayed</h2>
+          <p>
+            Processing usually takes a few days to a couple of weeks. If your department is slow or unresponsive, contact DGEHS headquarters for guidance.
+          </p>
+          <div class="contact-grid dgehs-only">
+            <div class="contact-item">
+              <strong>Phone</strong>
+              <a href="tel:+911122391435">011-22391435</a>
+              <a href="tel:+918745011773">8745011773</a>
+            </div>
+            <div class="contact-item">
+              <strong>Email</strong>
+              <a href="mailto:spodgehs-dhs@delhi.gov.in">spodgehs-dhs@delhi.gov.in</a>
+            </div>
+            <div class="contact-item">
+              <strong>Address</strong>
+              <span>Directorate General of Health Services, F-17, Karkardooma, Delhi-110032</span>
+            </div>
+            <div class="contact-item">
+              <strong>Website</strong>
+              <a href="https://dgehs.delhi.gov.in/dghs/dgehs" target="_blank" rel="noopener noreferrer">
+                dgehs.delhi.gov.in
+              </a>
+            </div>
+          </div>
+          <p class="note cghs-only hidden">
+            For CGHS card issues in Delhi, contact Additional Director, CGHS Headquarters, with your application, FIR, photographs, and IPO.
+          </p>
+        </article>
+
+        <article class="step-card" data-step="4">
+          <div class="step-header">
+            <span class="step-number">Step 4</span>
+            <label class="step-check">
+              <input type="checkbox" id="step4" data-step-key="update-ama" />
+              <span>Mark as done</span>
+            </label>
+          </div>
+          <h2>After you receive the duplicate</h2>
+          <ul>
+            <li>Verify name, validity, ward entitlement, and dependent details on the new card.</li>
+            <li>Inform your AMA (attached dispensary) so their records are updated.</li>
+            <li>Store a digital photo or scan of the card for future reference.</li>
+          </ul>
+        </article>
+      </section>
+
+      <section class="card checklist-card" aria-labelledby="checklist-heading">
+        <h2 id="checklist-heading">Quick checklist</h2>
+        <ol class="quick-checklist">
+          <li>File FIR or police complaint</li>
+          <li>Apply at salary / pension department (or CGHS HQ)</li>
+          <li>Submit application, FIR, fee, and 2 photos</li>
+          <li>Department verifies records and issues duplicate</li>
+          <li>Update AMA dispensary records</li>
+        </ol>
+      </section>
+
+      <section class="card" aria-labelledby="notes-heading">
+        <h2 id="notes-heading">Important notes</h2>
+        <ul>
+          <li>If you are unsure which scheme applies, check payslips, pension documents, or ask your department HR / admin section.</li>
+          <li>Your department remains the issuing authority for DGEHS; DGEHS HQ can guide you if there are delays.</li>
+          <li>Keep copies of every document you submit.</li>
+        </ul>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="container">
+        <p>
+          Based on official DGEHS rules. For the latest policy, confirm with your department or
+          <a href="https://dgehs.delhi.gov.in/dghs/dgehs" target="_blank" rel="noopener noreferrer">DGEHS Delhi</a>.
+        </p>
+      </div>
+    </footer>
+
+    <div class="toast hidden" id="toast" role="status" aria-live="polite">Copied to clipboard</div>
+
     <script src="main.js"></script>
   </body>
 </html>
